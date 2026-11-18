@@ -1,0 +1,15 @@
+/* Estilos globais do design (bloco <helmet> do Imperio da Goiaba CRM v2). */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { background: #ffffff; font-family: 'Inter', sans-serif; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #c3cdbf; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@media print {
+  @page { size: A4 landscape; margin: 12mm; }
+  body { background: #fff !important; }
+  aside, header, [data-no-print] { display: none !important; }
+  main, main > div { overflow: visible !important; height: auto !important; }
+  div { box-shadow: none !important; }
+}
