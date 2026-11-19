@@ -22,7 +22,13 @@
   // criado com a Direct connection do Supabase. CACHE DO HYPERDRIVE DESLIGADO (o CRM precisa
   // sempre do dado mais recente: sessões, saldos, vendas recém-salvas).
   "hyperdrive": [
-    { "binding": "HYPERDRIVE", "id": "524330f00a8d4a6d9f49b76b76f18312" }
+    {
+      "binding": "HYPERDRIVE",
+      "id": "524330f00a8d4a6d9f49b76b76f18312",
+      // Só para a simulação local (wrangler dev / passo de deploy do OpenNext, que exige um
+      // valor). Em produção o Worker usa o Hyperdrive real acima; este endereço nunca é usado.
+      "localConnectionString": "postgres://local:local@127.0.0.1:5432/local"
+    }
   ],
   // O banco (Supabase) fica nos EUA: o Smart Placement roda o Worker perto dele, então as
   // várias consultas de cada tela não atravessam o oceano — só a resposta final.
