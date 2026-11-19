@@ -1,4 +1,4 @@
-// Gerado a partir do design (Imperio da Goiaba CRM v2.dc.html) por scripts/convert-design.mjs.
+// Baseado no design (Imperio da Goiaba CRM v2.dc.html) e mantido à mão: nome da empresa, usuário logado, minha senha e troca de perfil só p/ admin.
 'use client';
 
 import { Fragment } from 'react';
@@ -14,7 +14,7 @@ export function Sidebar({ ui }: { ui: Vals }) {
           </div>
           <div style={{ lineHeight: "1.1" }}>
             <div style={{ fontFamily: "'Inter',sans-serif", fontWeight: "600", fontSize: "15px", letterSpacing: "-0.2px" }}>
-              Império da Goiaba
+              {ui.empresaNome}
             </div>
             <div style={{ fontSize: "11px", color: "#a9c2ae", letterSpacing: "0.3px" }}>
               Gestão da operação
@@ -46,15 +46,17 @@ export function Sidebar({ ui }: { ui: Vals }) {
         <div style={{ padding: "14px 16px 10px", borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", gap: "10px" }}>
           <div style={{ lineHeight: "1.2", fontSize: "12px" }}>
             <div style={{ fontWeight: "600", color: "#eef2ea" }}>
-              {ui.roleName}
+              {ui.userNome || ui.roleName}
             </div>
             <div style={{ color: "#a9c2ae", fontSize: "11px" }}>
-              {ui.roleSub}
+              {ui.roleName} · {ui.roleSub}
             </div>
           </div>
         </div>
         <div style={{ padding: "0 16px 14px" }}>
-          <div style={{ display: "flex", background: "rgba(255,255,255,0.08)", borderRadius: "9px", padding: "3px", gap: "3px" }}>
+          {/* só o admin alterna a visão (para conferir o que o funcionário vê) */}
+          {ui.podeTrocarPerfil ? (
+          <div title="Ver o sistema como" style={{ display: "flex", background: "rgba(255,255,255,0.08)", borderRadius: "9px", padding: "3px", gap: "3px" }}>
             <button onClick={ui.setRoleAdmin} style={{ flex: "1", border: "none", borderRadius: "7px", padding: "7px 0", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "'Inter',sans-serif", background: ui.roleAdminBg, color: ui.roleAdminFg }}>
               Admin
             </button>
@@ -62,6 +64,10 @@ export function Sidebar({ ui }: { ui: Vals }) {
               Funcionário
             </button>
           </div>
+          ) : null}
+          <button onClick={ui.abrirSenha} style={{ width: "100%", marginTop: "8px", border: "1px solid rgba(255,255,255,0.16)", background: "transparent", color: "#a9c2ae", borderRadius: "8px", padding: "7px 0", fontSize: "12px", fontWeight: "600", cursor: "pointer", fontFamily: "'Inter',sans-serif" }} className="h2">
+            Minha senha
+          </button>
           <button onClick={ui.logout} style={{ width: "100%", marginTop: "8px", border: "1px solid rgba(255,255,255,0.16)", background: "transparent", color: "#a9c2ae", borderRadius: "8px", padding: "7px 0", fontSize: "12px", fontWeight: "600", cursor: "pointer", fontFamily: "'Inter',sans-serif" }} className="h2">
             Sair da conta
           </button>

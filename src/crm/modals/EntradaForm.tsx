@@ -1,4 +1,4 @@
-// Gerado a partir do design (Imperio da Goiaba CRM v2.dc.html) por scripts/convert-design.mjs.
+// Baseado no design (Imperio da Goiaba CRM v2.dc.html) e mantido à mão: vencimento e conta do pagamento ao produtor.
 'use client';
 
 import { Fragment } from 'react';
@@ -43,6 +43,15 @@ export function EntradaForm({ ui }: { ui: Vals }) {
         </div>
         <div>
           <label style={{ fontSize: "11.5px", fontWeight: "600", color: "#4f5e54", marginBottom: "5px", display: "block" }}>
+            Vencimento
+          </label>
+          <input type="date" data-field="venc" value={ui.draft.venc ?? ''} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }} />
+          <div style={{ fontSize: "11px", color: "#6b7a6f", marginTop: "4px" }}>
+            Em branco = vence na data da coleta.
+          </div>
+        </div>
+        <div>
+          <label style={{ fontSize: "11.5px", fontWeight: "600", color: "#4f5e54", marginBottom: "5px", display: "block" }}>
             Data do pagamento
           </label>
           <input type="date" data-field="dataPag" value={ui.draft.dataPag ?? ''} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }} />
@@ -66,6 +75,19 @@ export function EntradaForm({ ui }: { ui: Vals }) {
             </option>
           </select>
         </div>
+        {ui.draft.pago === 'Pago' ? (
+        <div>
+          <label style={{ fontSize: "11.5px", fontWeight: "600", color: "#4f5e54", marginBottom: "5px", display: "block" }}>
+            Conta de onde saiu
+          </label>
+          <select data-field="bancoId" value={ui.draft.bancoId ?? ''} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }}>
+            <option value="">Caixa (dinheiro, sem banco)</option>
+            {(ui.bancoOptions || []).map((o) => (
+              <option key={o.id} value={o.id}>{o.nome}</option>
+            ))}
+          </select>
+        </div>
+        ) : null}
         <div style={{ gridColumn: "1/-1" }}>
           <label style={{ fontSize: "11.5px", fontWeight: "600", color: "#4f5e54", marginBottom: "5px", display: "block" }}>
             Motivo da perda

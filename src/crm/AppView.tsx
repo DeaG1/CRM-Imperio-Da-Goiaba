@@ -1,4 +1,4 @@
-// Gerado a partir do design (Imperio da Goiaba CRM v2.dc.html) por scripts/convert-design.mjs.
+// Baseado no design (Imperio da Goiaba CRM v2.dc.html) e mantido à mão: inclui a tela de Contas a pagar/receber.
 'use client';
 
 import type { Vals } from './types';
@@ -14,6 +14,8 @@ import { Funcionarios } from './screens/Funcionarios';
 import { Bancos } from './screens/Bancos';
 import { Veiculos } from './screens/Veiculos';
 import { Financeiro } from './screens/Financeiro';
+import { Contas } from './screens/Contas';
+import { Configuracoes } from './screens/Configuracoes';
 import { Relatorios } from './screens/Relatorios';
 import { ModalShell } from './modals/ModalShell';
 import { Login } from './Login';
@@ -42,6 +44,8 @@ export function AppView({ ui }: { ui: Vals }) {
                 {ui.isBancos ? <Bancos ui={ui} /> : null}
                 {ui.isVeiculos ? <Veiculos ui={ui} /> : null}
                 {ui.isFinanceiro ? <Financeiro ui={ui} /> : null}
+                {ui.isContas ? <Contas ui={ui} /> : null}
+                {ui.isConfiguracoes ? <Configuracoes ui={ui} /> : null}
                 {ui.isRelatorios ? <Relatorios ui={ui} /> : null}
               </div>
             </main>

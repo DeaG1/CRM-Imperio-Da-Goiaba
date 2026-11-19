@@ -1,4 +1,4 @@
-// Gerado a partir do design (Imperio da Goiaba CRM v2.dc.html) por scripts/convert-design.mjs.
+// Baseado no design (Imperio da Goiaba CRM v2.dc.html) e mantido à mão: rotas vêm das Configurações.
 'use client';
 
 import type { Vals } from '../types';
@@ -50,18 +50,10 @@ export function ClienteForm({ ui }: { ui: Vals }) {
                 Região / rota
               </label>
               <select data-field="rota" value={ui.draft.rota ?? ''} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }}>
-                <option value="Sul A">
-                  Sul A
-                </option>
-                <option value="Leste B">
-                  Leste B
-                </option>
-                <option value="Norte C">
-                  Norte C
-                </option>
-                <option value="Oeste D">
-                  Oeste D
-                </option>
+                {ui.rotaOptions.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+                {ui.draft.rota && !ui.rotaOptions.includes(ui.draft.rota) ? <option value={ui.draft.rota}>{ui.draft.rota}</option> : null}
               </select>
             </div>
           </>

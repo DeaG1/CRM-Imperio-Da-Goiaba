@@ -1,4 +1,4 @@
-// Gerado a partir do design (Imperio da Goiaba CRM v2.dc.html) por scripts/convert-design.mjs.
+// Baseado no design (Imperio da Goiaba CRM v2.dc.html) e mantido à mão: diárias como contas a pagar.
 'use client';
 
 import { Fragment } from 'react';
@@ -249,7 +249,11 @@ export function Funcionarios({ ui }: { ui: Vals }) {
                 <strong style={{ color: "#16241b" }}>
                   Financeiro
                 </strong>
-                {' '}e sai do banco escolhido ·{' '}
+                {' '}como custo e só sai do banco quando é{' '}
+                <strong style={{ color: "#16241b" }}>
+                  paga
+                </strong>
+                {' '}·{' '}
                 <strong style={{ color: "#16241b" }}>
                   {ui.periodLabel}
                 </strong>
@@ -268,7 +272,7 @@ export function Funcionarios({ ui }: { ui: Vals }) {
                     <div style={{ fontSize: "12px", color: "#66756a", fontWeight: "600" }}>
                       {s.label}
                     </div>
-                    <div style={{ fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums", fontWeight: "600", fontSize: "23px", color: "#0f2a18", marginTop: "6px" }}>
+                    <div style={{ fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums", fontWeight: "600", fontSize: "23px", color: s.color || "#0f2a18", marginTop: "6px" }}>
                       {s.value}
                     </div>
                     <div style={{ fontSize: "11.5px", color: "#6b7a6f" }}>
@@ -279,8 +283,8 @@ export function Funcionarios({ ui }: { ui: Vals }) {
               ))}
             </div>
             <div style={{ background: "#fff", border: "1px solid #e7ece3", borderRadius: "13px", overflow: "auto" }}>
-              <div style={{ minWidth: "780px" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "100px minmax(160px,1.4fr) minmax(140px,1.4fr) minmax(140px,1fr) 120px 80px", gap: "14px", padding: "12px 20px", borderBottom: "1px solid #e7ece3", fontSize: "10.5px", fontWeight: "700", color: "#6b7a6f", letterSpacing: "0.3px" }}>
+              <div style={{ minWidth: "960px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "92px minmax(140px,1.3fr) minmax(140px,1.4fr) minmax(110px,1fr) 110px 110px 150px", gap: "14px", padding: "12px 20px", borderBottom: "1px solid #e7ece3", fontSize: "10.5px", fontWeight: "700", color: "#6b7a6f", letterSpacing: "0.3px" }}>
                   <span>
                     DATA
                   </span>
@@ -296,11 +300,14 @@ export function Funcionarios({ ui }: { ui: Vals }) {
                   <span style={{ textAlign: "right" }}>
                     VALOR
                   </span>
+                  <span>
+                    SITUAÇÃO
+                  </span>
                   <span />
                 </div>
                 {(ui.diariaRows || []).map((d, k0) => (
                   <Fragment key={k0}>
-                    <div style={{ display: "grid", gridTemplateColumns: "100px minmax(160px,1.4fr) minmax(140px,1.4fr) minmax(140px,1fr) 120px 80px", gap: "14px", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid #f3f6f0", fontSize: "13px" }} className="h4">
+                    <div style={{ display: "grid", gridTemplateColumns: "92px minmax(140px,1.3fr) minmax(140px,1.4fr) minmax(110px,1fr) 110px 110px 150px", gap: "14px", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid #f3f6f0", fontSize: "13px" }} className="h4">
                       <span style={{ display: "flex", flexDirection: "column", lineHeight: "1.3" }}>
                         <span style={{ fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums", color: "#16241b" }}>
                           {d.data}
@@ -321,7 +328,22 @@ export function Funcionarios({ ui }: { ui: Vals }) {
                       <span style={{ textAlign: "right", fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums", fontWeight: "600", color: "#b3283d" }}>
                         {d.valor}
                       </span>
-                      <span style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "2px" }}>
+                        <span style={{ fontSize: "11.5px", color: d.situacaoColor, background: d.situacaoBg, padding: "3px 9px", borderRadius: "14px", fontWeight: "600" }}>
+                          {d.situacao}
+                        </span>
+                        {d.pagInfo ? (
+                          <span style={{ fontSize: "11px", color: "#6b7a6f" }}>
+                            {d.pagInfo}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span style={{ display: "flex", justifyContent: "flex-end", gap: "6px" }}>
+                        {!d.paga ? (
+                          <button onClick={d.pagar} style={{ background: "#1d7a3e", color: "#fff", border: "none", borderRadius: "8px", padding: "6px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "'Inter',sans-serif" }} className="h5">
+                            Pagar
+                          </button>
+                        ) : null}
                         <button onClick={d.edit} style={{ background: "#fff", color: "#2c3a31", border: "1px solid #d3dbcf", borderRadius: "8px", padding: "6px 11px", fontSize: "12px", fontWeight: "600", cursor: "pointer", fontFamily: "'Inter',sans-serif" }} className="h4">
                           Editar
                         </button>

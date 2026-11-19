@@ -1,4 +1,4 @@
-// Gerado a partir do design (Imperio da Goiaba CRM v2.dc.html) por scripts/convert-design.mjs.
+// Baseado no design (Imperio da Goiaba CRM v2.dc.html) e mantido à mão: interação, baixa única, usuário e senha.
 'use client';
 
 import type { Vals } from '../types';
@@ -13,7 +13,10 @@ import { BancoForm } from './BancoForm';
 import { VeiculoForm } from './VeiculoForm';
 import { FuncionarioForm } from './FuncionarioForm';
 import { PerdaForm } from './PerdaForm';
-import { PagamentoForm } from './PagamentoForm';
+import { InteracaoForm } from './InteracaoForm';
+import { BaixaForm } from './BaixaForm';
+import { UsuarioForm } from './UsuarioForm';
+import { SenhaForm } from './SenhaForm';
 
 export function ModalShell({ ui }: { ui: Vals }) {
   return (
@@ -41,7 +44,10 @@ export function ModalShell({ ui }: { ui: Vals }) {
             {ui.modalVeiculo ? <VeiculoForm ui={ui} /> : null}
             {ui.modalFuncionario ? <FuncionarioForm ui={ui} /> : null}
             {ui.modalPerda ? <PerdaForm ui={ui} /> : null}
-            {ui.modalPagamento ? <PagamentoForm ui={ui} /> : null}
+            {ui.modalInteracao ? <InteracaoForm ui={ui} /> : null}
+            {ui.modalBaixa ? <BaixaForm ui={ui} /> : null}
+            {ui.modalUsuario ? <UsuarioForm ui={ui} /> : null}
+            {ui.modalSenha ? <SenhaForm ui={ui} /> : null}
           </div>
           <div style={{ padding: "15px 24px", borderTop: "1px solid #e7ece3", display: "flex", alignItems: "center", gap: "10px", background: "#fff" }}>
             {ui.isEditing ? (

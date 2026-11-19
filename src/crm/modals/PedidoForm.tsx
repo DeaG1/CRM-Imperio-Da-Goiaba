@@ -1,4 +1,4 @@
-// Gerado a partir do design (Imperio da Goiaba CRM v2.dc.html) por scripts/convert-design.mjs.
+// Baseado no design (Imperio da Goiaba CRM v2.dc.html) e mantido à mão: recebimento com conta, vencimento automático e limite de crédito.
 'use client';
 
 import { Fragment } from 'react';
@@ -181,24 +181,46 @@ export function PedidoForm({ ui }: { ui: Vals }) {
           <label style={{ fontSize: "11.5px", fontWeight: "600", color: "#4f5e54", marginBottom: "5px", display: "block" }}>
             Status de pagamento
           </label>
-          <select data-field="pag" value={ui.draft.pag ?? ''} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }}>
-            <option value="Pago">
-              Pago
-            </option>
-            <option value="Pendente">
-              Pendente
-            </option>
-            <option value="Atrasado">
-              Atrasado
-            </option>
+          <select data-field="pag" value={ui.draft.pag === 'Pago' ? 'Pago' : 'Pendente'} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }}>
+            <option value="Pendente">A receber</option>
+            <option value="Pago">Recebido</option>
           </select>
         </div>
         <div>
           <label style={{ fontSize: "11.5px", fontWeight: "600", color: "#4f5e54", marginBottom: "5px", display: "block" }}>
             Vencimento
           </label>
-          <input data-field="venc" value={ui.draft.venc ?? ''} onChange={ui.updateDraft} placeholder="dd/mm" style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }} />
+          <input type="date" data-field="venc" value={ui.draft.venc && ui.draft.venc !== '—' ? ui.draft.venc : ''} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }} />
+          <div style={{ fontSize: "11px", color: "#6b7a6f", marginTop: "4px" }}>
+            Em branco = entrega + prazo do cliente. Passou do vencimento sem receber, fica &quot;Atrasado&quot; sozinho.
+          </div>
         </div>
+        {ui.draft.pag === 'Pago' ? (
+          <>
+        <div>
+          <label style={{ fontSize: "11.5px", fontWeight: "600", color: "#4f5e54", marginBottom: "5px", display: "block" }}>
+            Recebido em
+          </label>
+          <input type="date" data-field="dataPagIso" value={ui.draft.dataPagIso ?? ''} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }} />
+        </div>
+        <div>
+          <label style={{ fontSize: "11.5px", fontWeight: "600", color: "#4f5e54", marginBottom: "5px", display: "block" }}>
+            Conta que recebeu
+          </label>
+          <select data-field="bancoId" value={ui.draft.bancoId ?? ''} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }}>
+            <option value="">Caixa (dinheiro, sem banco)</option>
+            {(ui.bancoOptions || []).map((o) => (
+              <option key={o.id} value={o.id}>{o.nome}</option>
+            ))}
+          </select>
+        </div>
+          </>
+        ) : null}
+        {ui.alertaCredito ? (
+          <div role="alert" style={{ gridColumn: "1/-1", background: "#fbe7ea", border: "1px solid #f2c6cd", borderRadius: "9px", padding: "10px 13px", fontSize: "12.5px", color: "#b3283d" }}>
+            {ui.alertaCredito}
+          </div>
+        ) : null}
         <div style={{ gridColumn: "1/-1", background: "#eef6ef", border: "1px solid #cfe3d3", borderRadius: "9px", padding: "10px 13px", fontSize: "12px", color: "#17642f" }}>
           O{' '}
           <strong>

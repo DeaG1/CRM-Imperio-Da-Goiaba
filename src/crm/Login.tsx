@@ -1,4 +1,4 @@
-// Gerado a partir do design (Imperio da Goiaba CRM v2.dc.html) por scripts/convert-design.mjs.
+// Baseado no design (Imperio da Goiaba CRM v2.dc.html) e mantido à mão: login real com usuário/senha.
 'use client';
 
 import type { Vals } from './types';
@@ -29,30 +29,28 @@ export function Login({ ui }: { ui: Vals }) {
                 Entrar
               </h2>
               <p style={{ margin: "0", color: "#5a6a5f", fontSize: "14px" }}>
-                Escolha o perfil e informe a senha.
+                Informe seu usuário e senha.
               </p>
             </div>
             <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
               <span style={{ fontSize: "12px", fontWeight: "500", color: "#2c3a31" }}>
-                Perfil de acesso
+                Usuário
               </span>
-              <select value={ui.loginRole ?? ''} onChange={ui.setLoginRole} style={{ height: "42px", padding: "0 10px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "14px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#ffffff" }}>
-                <option value="admin">
-                  Admin — acesso total
-                </option>
-                <option value="colaborador">
-                  Funcionário — entrada, saída e estoque
-                </option>
-              </select>
+              <input autoFocus autoComplete="username" value={ui.loginUser ?? ''} onChange={ui.setLoginUser} onKeyDown={ui.loginOnKey} placeholder="Ex.: admin" style={{ height: "42px", padding: "0 12px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "14px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#ffffff" }} />
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
               <span style={{ fontSize: "12px", fontWeight: "500", color: "#2c3a31" }}>
                 Senha
               </span>
-              <input type="password" value={ui.loginPass ?? ''} onChange={ui.setLoginPass} onKeyDown={ui.loginOnKey} placeholder="Qualquer senha entra no protótipo" style={{ height: "42px", padding: "0 12px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "14px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#ffffff" }} />
+              <input type="password" autoComplete="current-password" value={ui.loginPass ?? ''} onChange={ui.setLoginPass} onKeyDown={ui.loginOnKey} style={{ height: "42px", padding: "0 12px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "14px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#ffffff" }} />
             </label>
-            <button onClick={ui.doLogin} style={{ height: "44px", marginTop: "4px", background: "#1d7a3e", color: "#ffffff", border: "none", borderRadius: "8px", fontSize: "14px", fontWeight: "600", cursor: "pointer", fontFamily: "'Inter',sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }} className="h5">
-              Entrar no sistema
+            {ui.loginHasErr ? (
+              <div role="alert" style={{ background: "#fbe7ea", border: "1px solid #f2c6cd", color: "#b3283d", borderRadius: "8px", padding: "9px 12px", fontSize: "13px" }}>
+                {ui.loginErr}
+              </div>
+            ) : null}
+            <button onClick={ui.doLogin} disabled={ui.loginBusy} style={{ height: "44px", marginTop: "4px", background: "#1d7a3e", color: "#ffffff", border: "none", borderRadius: "8px", fontSize: "14px", fontWeight: "600", cursor: ui.loginBusy ? "wait" : "pointer", opacity: ui.loginBusy ? 0.75 : 1, fontFamily: "'Inter',sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }} className="h5">
+              {ui.loginBusy ? 'Entrando…' : 'Entrar no sistema'}
             </button>
           </div>
         </div>

@@ -4,156 +4,201 @@
  * Lógica do CRM Império da Goiaba — portada do design
  * "Imperio da Goiaba CRM v2.dc.html" (bloco <script type="text/x-dc">).
  *
- * Mantém o mesmo estado, as mesmas regras de negócio e a mesma persistência
- * em localStorage do protótipo. `renderVals()` calcula tudo o que as telas
- * exibem; os componentes em ./screens, ./modals e ./layout só desenham.
+ * Mantém o mesmo estado e as mesmas regras de negócio do protótipo; os dados
+ * vêm da API (/api/bootstrap) e cada gravação/exclusão vai para o servidor.
+ * `renderVals()` calcula tudo o que as telas exibem; os componentes em
+ * ./screens, ./modals e ./layout só desenham.
  */
 import { Component } from 'react';
 import { AppView } from './AppView';
+import { api, ApiError } from './api';
+import { Aviso, Carregando } from './Aviso';
+import { CONFIG_PADRAO } from '../shared/config-padrao';
+
+const VAZIO = { bancos: [], veiculos: [], clientes: [], pedidos: [], fornecedores: [], produtos: [], interacoes: [], lancamentos: [], funcionarios: [], perdas: [], entradas: [] };
+/** modal -> coleção/recurso da API */
+const COLS = { interacao:'interacoes', cliente:'clientes', pedido:'pedidos', fornecedor:'fornecedores', produto:'produtos', perda:'perdas', lancamento:'lancamentos', diaria:'lancamentos', banco:'bancos', veiculo:'veiculos', funcionario:'funcionarios', entrada:'entradas' };
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export class CrmApp extends Component<Record<string, never>, any> {
   /** Dados do CSV do relatório ativo (preenchido em renderVals). */
   _csv: any = null;
 
-  state = {
-    logged: false, loginRole: 'admin', loginPass: '', loginErr: '',
+  state: any = {
+    booting: true, user: null, salvando: false, aviso: null,
+    logged: false, loginUser: '', loginPass: '', loginErr: '', loginBusy: false,
     screen: 'dashboard', clienteView: 'list', clienteId: 1, periodo: 'all', role: 'admin', relView: 'clientes',
     modal: null, draft: null, isEditing: false, funcAberto: null, veicAberto: null,
-    bancos: this._load('crm_hf_bancos_d1', () => this.seedBancos(), a => Array.isArray(a)).map(b => b.saldoInicial == null ? { ...b, saldoInicial: (this.seedBancos().find(s=>s.id===b.id && s.instituicao===b.instituicao)||{saldoInicial:0}).saldoInicial } : b),
-    veiculos: this._load('crm_hf_veic_d1', () => this.seedVeiculos(), a => Array.isArray(a)),
-    clientes: this._load('crm_hf_clientes_d3', () => this.seedClientes(), a => Array.isArray(a)),
-    pedidos: this._load('crm_hf_pedidos_d2', () => this.seedPedidos(), a => Array.isArray(a)),
-    fornecedores: this._load('crm_hf_fornec_d2', () => this.seedFornecedores(), a => Array.isArray(a)),
-    produtos: this._load('crm_hf_produtos_d3', () => this.seedProdutos(), a => Array.isArray(a)),
-    lancamentos: (() => { const a = this._load('crm_hf_lanc_d3', () => this.seedLancamentos(), x => Array.isArray(x)); const ids = new Set(a.map(x => x.id)); return a.concat(this.seedLancamentos().filter(x => (x.veiculoId || x.categoria==='Diária') && !ids.has(x.id))); })(),
-    funcionarios: this._load('crm_hf_func_d2', () => this.seedFuncionarios(), a => Array.isArray(a)),
-    perdas: this._load('crm_hf_perdas_d1', () => this.seedPerdas(), a => Array.isArray(a)),
-    entradas: this._load('crm_hf_entradas_d2', () => this.seedEntradas(), a => Array.isArray(a))
+    ...VAZIO
   };
 
   GREEN = '#2e8b4a'; AMBER = '#c79320'; RED = '#d6334a';
   GBG = '#e7f1e8'; ABG = '#f6efd8'; RBG = '#fbe7ea';
 
+  _avisoTimer: any = null;
+
+  _refreshTimer: any = null;
+
   componentDidMount() {
-    this._save('crm_hf_clientes_d3', this.state.clientes);
-    this._save('crm_hf_pedidos_d2', this.state.pedidos);
-    this._save('crm_hf_fornec_d2', this.state.fornecedores);
-    this._save('crm_hf_produtos_d3', this.state.produtos);
-    this._save('crm_hf_lanc_d3', this.state.lancamentos);
-    this._save('crm_hf_func_d2', this.state.funcionarios);
-    this._save('crm_hf_veic_d1', this.state.veiculos);
-    this._save('crm_hf_bancos_d1', this.state.bancos);
-    this._save('crm_hf_perdas_d1', this.state.perdas);
-    this._save('crm_hf_entradas_d2', this.state.entradas);
+    this._boot();
+    // outra pessoa lançou algo? atualiza a cada minuto e ao voltar para a aba
+    this._refreshTimer = setInterval(this._atualizar, 60000);
+    window.addEventListener('focus', this._atualizar);
+  }
+  componentWillUnmount() {
+    clearTimeout(this._avisoTimer);
+    clearInterval(this._refreshTimer);
+    window.removeEventListener('focus', this._atualizar);
   }
 
-  SENHAS = { admin:'admin123', colaborador:'func123' };
-  setLoginRole = (e) => this.setState({ loginRole: e.target.value, loginErr:'' });
+  /** Recarrega as coleções sem mexer na tela atual (não interrompe quem está editando). */
+  _atualizar = async () => {
+    if (!this.state.logged || this.state.modal || this.state.salvando || document.visibilityState !== 'visible') return;
+    try { await this._recarregarDados(); } catch (e) { if (e instanceof ApiError && e.status === 401) this.avisar(e); }
+  };
+  async _recarregarDados() {
+    const { user, data, config } = await api('GET', '/api/bootstrap');
+    if (this.state.modal && this.state.modal !== 'pagamento') return;
+    this.setState({ ...data, user, config: config || this.state.config });
+  }
+
+  async _boot() {
+    try {
+      const { user } = await api('GET', '/api/auth/me');
+      if (user) await this._carregar(user.role === 'admin' ? 'dashboard' : 'entradas');
+    } catch (e) { this.avisar(e); }
+    finally { this.setState({ booting: false }); }
+  }
+
+  /** Busca todas as coleções que o perfil pode ver. */
+  async _carregar(screen?: string) {
+    const { user, data, config } = await api('GET', '/api/bootstrap');
+    this.setState(s => ({ ...VAZIO, ...data, user, config, logged: true, role: user.role, screen: screen ?? s.screen, clienteView: 'list' }));
+  }
+
+  /** Mostra um aviso (erro por padrão). Sessão expirada volta para o login. */
+  avisar = (e: any, tipo: 'erro' | 'ok' = 'erro') => {
+    if (e instanceof ApiError && e.status === 401 && this.state.logged) {
+      this.setState({ ...VAZIO, logged: false, user: null, modal: null, draft: null, loginErr: 'Sua sessão expirou. Entre de novo.' });
+      return;
+    }
+    const texto = typeof e === 'string' ? e : (e && e.message) || 'Algo deu errado.';
+    clearTimeout(this._avisoTimer);
+    this.setState({ aviso: { texto, tipo } });
+    this._avisoTimer = setTimeout(() => this.setState({ aviso: null }), 5000);
+  };
+  fecharAviso = () => this.setState({ aviso: null });
+
+  /** Cria (POST) ou atualiza (PUT) e substitui o registro na coleção local. */
+  async _gravar(col: string, d: any, isNew: boolean, prepend = false) {
+    const body = { ...d };
+    if (isNew) delete body.id;
+    const saved = isNew
+      ? await api('POST', '/api/' + col, body)
+      : await api('PUT', '/api/' + col + '/' + encodeURIComponent(d.id), body);
+    this.setState(s => {
+      const list = s[col].slice();
+      const i = list.findIndex(x => x.id === saved.id);
+      if (i >= 0) list[i] = saved; else if (prepend) list.unshift(saved); else list.push(saved);
+      return { [col]: list };
+    });
+    return saved;
+  }
+
+  /** Exclui no servidor e reflete localmente (inclusive vínculos que ficam vazios). */
+  async _excluir(modal: string, id: any) {
+    const col = COLS[modal];
+    await api('DELETE', '/api/' + col + '/' + encodeURIComponent(id));
+    this.setState(s => {
+      const upd: any = { [col]: s[col].filter(x => x.id !== id) };
+      const campo = ({ banco: 'bancoId', veiculo: 'veiculoId', funcionario: 'funcionarioId' })[modal];
+      if (campo) upd.lancamentos = (upd.lancamentos || s.lancamentos).map(l => String(l[campo] || '') === String(id) ? { ...l, [campo]: '' } : l);
+      if (modal === 'produto') upd.perdas = s.perdas.map(p => String(p.produtoId) === String(id) ? { ...p, produtoId: '' } : p);
+      return upd;
+    });
+  }
+
+  setLoginUser = (e) => this.setState({ loginUser: e.target.value, loginErr:'' });
   setLoginPass = (e) => this.setState({ loginPass: e.target.value, loginErr:'' });
-  doLogin = () => {
-    const r = this.state.loginRole;
-    
-    this.setState({ logged:true, role:r, loginPass:'', loginErr:'', screen: r==='admin' ? 'dashboard' : 'entradas' });
+  doLogin = async () => {
+    if (this.state.loginBusy) return;
+    this.setState({ loginBusy: true, loginErr: '' });
+    try {
+      const { user } = await api('POST', '/api/auth/login', { usuario: this.state.loginUser, senha: this.state.loginPass });
+      await this._carregar(user.role === 'admin' ? 'dashboard' : 'entradas');
+      this.setState({ loginPass: '' });
+    } catch (e) {
+      this.setState({ loginErr: e.message || 'Não foi possível entrar.' });
+    } finally {
+      this.setState({ loginBusy: false });
+    }
   };
   loginOnKey = (e) => { if (e.key === 'Enter') this.doLogin(); };
-  logout = () => this.setState({ logged:false, loginPass:'', loginErr:'', modal:null, draft:null });
+  logout = async () => {
+    try { await api('POST', '/api/auth/logout', {}); } catch { /* sai mesmo assim */ }
+    this.setState({ ...VAZIO, logged:false, user:null, loginPass:'', loginErr:'', modal:null, draft:null });
+  };
 
-  seedPerdas() { return [
-    {id:1,data:'2026-06-19',produtoId:4,nome:'Alface',un:'CX',qtd:4,motivo:'vencimento',obs:'Sobra da rota Leste que não vendeu'},
-    {id:2,data:'2026-06-26',produtoId:3,nome:'Tomate',un:'CX',qtd:3,motivo:'armazenagem',obs:'Caixa amassada no empilhamento'}
-  ]; }
-  seedClientes() { return [
-    {id:1,nome:'Mercado Bom Preço',resp:'Sônia Alves',cnpj:'12.345.678/0001-90',tel:'(41) 99812-3344',email:'compras@bompreco.com.br',endereco:'R. das Flores, 210 — Boqueirão, Curitiba/PR',rota:'Sul A',freq:'2×/sem · Seg e Qui',status:'ativo',ticketMes:0,ticketEntrega:0,volume:0,cobranca:'Em dia',forma:'PIX',limite:6000,prazo:14,tend:'↑',ult:'—',obs:'Cliente fiel, volume crescendo há 3 meses. Avaliar aumento de limite.'},
-    {id:2,nome:'Minimercado Vila Nova',resp:'Carlos Teixeira',cnpj:'23.456.789/0001-01',tel:'(41) 99765-1122',email:'',endereco:'Av. Vila Nova, 89 — Pinheirinho, Curitiba/PR',rota:'Sul A',freq:'2×/sem · Seg e Qui',status:'ativo',ticketMes:0,ticketEntrega:0,volume:0,cobranca:'Em dia',forma:'Boleto',limite:5000,prazo:14,tend:'→',ult:'—',obs:'Estável e pontual. Bom candidato para testar itens premium.'},
-    {id:3,nome:'Empório da Esquina',resp:'Renata Lima',cnpj:'34.567.890/0001-12',tel:'(41) 99654-7788',email:'',endereco:'R. XV de Outubro, 540 — Cristo Rei, Curitiba/PR',rota:'Leste B',freq:'1×/sem · Qua',status:'negociacao',ticketMes:0,ticketEntrega:0,volume:0,cobranca:'Em dia',forma:'PIX',limite:3000,prazo:7,tend:'→',ult:'—',obs:'Em negociação para subir para 2×/semana.'},
-    {id:4,nome:'Mini Atacado Real',resp:'Fábio Nunes',cnpj:'89.012.345/0001-67',tel:'(41) 99109-5577',email:'',endereco:'Av. Industrial, 980 — CIC, Curitiba/PR',rota:'Norte C',freq:'2×/sem · Ter e Sex',status:'ativo',ticketMes:0,ticketEntrega:0,volume:0,cobranca:'Em dia',forma:'PIX',limite:7000,prazo:21,tend:'↑',ult:'—',obs:'Maior cliente da carteira. Excelente histórico de pagamento.'},
-    {id:5,nome:'Mercearia Santa Rita',resp:'Pedro Gomes',cnpj:'56.789.012/0001-34',tel:'(41) 99432-5566',email:'',endereco:'R. Santa Rita, 77 — Portão, Curitiba/PR',rota:'Oeste D',freq:'2×/sem · Seg e Qui',status:'ativo',ticketMes:0,ticketEntrega:0,volume:0,cobranca:'Atrasado',forma:'Boleto',limite:4500,prazo:14,tend:'↓',ult:'—',obs:'Um atraso este mês. Acompanhar o próximo vencimento de perto.'},
-    {id:6,nome:'Mercado Central',resp:'Lúcia Prado',cnpj:'90.123.456/0001-78',tel:'(41) 99098-6611',email:'',endereco:'R. Marechal, 450 — Centro, Curitiba/PR',rota:'Oeste D',freq:'2×/sem · Seg e Qui',status:'ativo',ticketMes:0,ticketEntrega:0,volume:0,cobranca:'Em dia',forma:'PIX',limite:5000,prazo:14,tend:'→',ult:'—',obs:'Constante, sem ocorrências relevantes.'},
-    {id:7,nome:'Quitanda do Zé',resp:'José Martins',cnpj:'78.901.234/0001-56',tel:'(41) 99210-3434',email:'',endereco:'R. das Hortênsias, 15 — Cajuru, Curitiba/PR',rota:'Leste B',freq:'1×/sem · Qua',status:'inadimplente',ticketMes:0,ticketEntrega:0,volume:0,cobranca:'Em cobrança',forma:'Dinheiro',limite:2500,prazo:7,tend:'↓',ult:'—',obs:'Ticket baixo e atrasos recorrentes. Reavaliar atendimento da rota.'}
-  ]; }
-  seedProdutos() { return [
-    {id:1,nome:'Batata',un:'KG'},{id:2,nome:'Cebola',un:'KG'},{id:3,nome:'Tomate',un:'CX'},
-    {id:4,nome:'Alface',un:'CX'},{id:5,nome:'Banana',un:'KG'},{id:6,nome:'Maçã',un:'CX'}
-  ]; }
-  seedFornecedores() { return [
-    {id:1,nome:'Fazenda Boa Terra',regiao:'Londrina — Norte do PR',contato:'(43) 99811-2020',produtos:['Batata','Cebola']},
-    {id:2,nome:'Sítio Recanto Verde',regiao:'Maringá — Norte do PR',contato:'(44) 99722-3131',produtos:['Alface','Tomate']},
-    {id:3,nome:'Cooperativa Norte PR',regiao:'Apucarana — Norte do PR',contato:'(43) 99633-4242',produtos:['Banana','Maçã']}
-  ]; }
-  seedEntradas() { return [
-    {id:'C-1040',fornecedor:'Fazenda Boa Terra',data:'2026-06-08',pesoKg:2250,valor:4350,perdaKg:140,motivo:'transporte',pago:'Pago',dataPag:'2026-06-10',formaPag:'PIX',itens:[{produtoId:1,nome:'Batata',un:'KG',kg:1500,preco:1.85,perdaKg:85},{produtoId:2,nome:'Cebola',un:'KG',kg:750,preco:2.10,perdaKg:55}]},
-    {id:'C-1041',fornecedor:'Sítio Recanto Verde',data:'2026-06-11',pesoKg:135,valor:4275,perdaKg:9,motivo:'armazenagem',pago:'Pago',dataPag:'2026-06-13',formaPag:'Boleto',itens:[{produtoId:4,nome:'Alface',un:'CX',kg:90,preco:25,perdaKg:6},{produtoId:3,nome:'Tomate',un:'CX',kg:45,preco:45,perdaKg:3}]},
-    {id:'C-1042',fornecedor:'Cooperativa Norte PR',data:'2026-06-15',pesoKg:636,valor:3168,perdaKg:36,motivo:'vencimento',pago:'Pago',dataPag:'2026-06-18',formaPag:'PIX',itens:[{produtoId:5,nome:'Banana',un:'KG',kg:600,preco:2.40,perdaKg:34},{produtoId:6,nome:'Maçã',un:'CX',kg:36,preco:48,perdaKg:2}]},
-    {id:'C-1043',fornecedor:'Fazenda Boa Terra',data:'2026-06-22',pesoKg:1350,valor:2610,perdaKg:76,motivo:'manuseio',pago:'Pago',dataPag:'2026-06-24',formaPag:'PIX',itens:[{produtoId:1,nome:'Batata',un:'KG',kg:900,preco:1.85,perdaKg:48},{produtoId:2,nome:'Cebola',un:'KG',kg:450,preco:2.10,perdaKg:28}]},
-    {id:'C-1044',fornecedor:'Sítio Recanto Verde',data:'2026-06-25',pesoKg:111,valor:3606,perdaKg:8,motivo:'transporte',pago:'Pendente',dataPag:'',formaPag:'PIX',itens:[{produtoId:4,nome:'Alface',un:'CX',kg:75,preco:26,perdaKg:5},{produtoId:3,nome:'Tomate',un:'CX',kg:36,preco:46,perdaKg:3}]},
-    {id:'C-1045',fornecedor:'Cooperativa Norte PR',data:'2026-06-27',pesoKg:504,valor:2352,perdaKg:27,motivo:'armazenagem',pago:'Pendente',dataPag:'',formaPag:'Boleto',itens:[{produtoId:5,nome:'Banana',un:'KG',kg:480,preco:2.45,perdaKg:26},{produtoId:6,nome:'Maçã',un:'CX',kg:24,preco:49,perdaKg:1}]}
-  ]; }
-  seedPedidos() { return [
-    {id:'#2041',cliente:'Mercado Bom Preço',rota:'Sul A',dataPedido:'2026-06-09',entrega:'2026-06-10',pesoKg:510,valor:3960,status:'Entregue',pag:'Pago',venc:'—',recebDias:2,perdaKg:0,motivo:'—',dataPag:'2026-06-12',formaPag:'PIX',itens:[{produtoId:1,nome:'Batata',un:'KG',kg:450,preco:3.20,perdaKg:0},{produtoId:4,nome:'Alface',un:'CX',kg:60,preco:42,perdaKg:0}]},
-    {id:'#2042',cliente:'Mini Atacado Real',rota:'Norte C',dataPedido:'2026-06-11',entrega:'2026-06-12',pesoKg:930,valor:5160,status:'Entregue',pag:'Pago',venc:'—',recebDias:3,perdaKg:0,motivo:'—',dataPag:'2026-06-15',formaPag:'Boleto',itens:[{produtoId:1,nome:'Batata',un:'KG',kg:600,preco:3.20,perdaKg:0},{produtoId:2,nome:'Cebola',un:'KG',kg:300,preco:3.60,perdaKg:0},{produtoId:3,nome:'Tomate',un:'CX',kg:30,preco:72,perdaKg:0}]},
-    {id:'#2043',cliente:'Minimercado Vila Nova',rota:'Sul A',dataPedido:'2026-06-15',entrega:'2026-06-16',pesoKg:570,valor:4554,status:'Entregue',pag:'Pago',venc:'—',recebDias:2,perdaKg:0,motivo:'—',dataPag:'2026-06-18',formaPag:'PIX',itens:[{produtoId:5,nome:'Banana',un:'KG',kg:540,preco:4.10,perdaKg:0},{produtoId:6,nome:'Maçã',un:'CX',kg:30,preco:78,perdaKg:0}]},
-    {id:'#2044',cliente:'Mercado Central',rota:'Oeste D',dataPedido:'2026-06-17',entrega:'2026-06-18',pesoKg:672,valor:3125,status:'Entregue',pag:'Pago',venc:'—',recebDias:4,perdaKg:0,motivo:'—',dataPag:'2026-06-22',formaPag:'Boleto',itens:[{produtoId:1,nome:'Batata',un:'KG',kg:540,preco:3.20,perdaKg:0},{produtoId:2,nome:'Cebola',un:'KG',kg:108,preco:3.60,perdaKg:0},{produtoId:4,nome:'Alface',un:'CX',kg:24,preco:42,perdaKg:0}]},
-    {id:'#2045',cliente:'Mercearia Santa Rita',rota:'Oeste D',dataPedido:'2026-06-22',entrega:'2026-06-23',pesoKg:384,valor:3348,status:'Entregue',pag:'Atrasado',venc:'2026-07-07',recebDias:0,perdaKg:0,motivo:'—',itens:[{produtoId:5,nome:'Banana',un:'KG',kg:360,preco:4.10,perdaKg:0},{produtoId:6,nome:'Maçã',un:'CX',kg:24,preco:78,perdaKg:0}]},
-    {id:'#2046',cliente:'Empório da Esquina',rota:'Leste B',dataPedido:'2026-06-24',entrega:'2026-06-25',pesoKg:285,valor:2754,status:'Entregue',pag:'Pago',venc:'—',recebDias:5,perdaKg:0,motivo:'—',dataPag:'2026-06-30',formaPag:'PIX',itens:[{produtoId:4,nome:'Alface',un:'CX',kg:45,preco:42,perdaKg:0},{produtoId:2,nome:'Cebola',un:'KG',kg:240,preco:3.60,perdaKg:0}]},
-    {id:'#2047',cliente:'Quitanda do Zé',rota:'Leste B',dataPedido:'2026-06-24',entrega:'2026-06-25',pesoKg:108,valor:443,status:'Entregue',pag:'Atrasado',venc:'2026-07-01',recebDias:0,perdaKg:0,motivo:'—',itens:[{produtoId:5,nome:'Banana',un:'KG',kg:108,preco:4.10,perdaKg:0}]},
-    {id:'#2048',cliente:'Mercado Bom Preço',rota:'Sul A',dataPedido:'2026-06-26',entrega:'2026-06-27',pesoKg:636,valor:4512,status:'Entregue',pag:'Pago',venc:'—',recebDias:3,perdaKg:0,motivo:'—',dataPag:'2026-06-30',formaPag:'PIX',itens:[{produtoId:1,nome:'Batata',un:'KG',kg:600,preco:3.20,perdaKg:0},{produtoId:3,nome:'Tomate',un:'CX',kg:36,preco:72,perdaKg:0}]},
-    {id:'#2049',cliente:'Mini Atacado Real',rota:'Norte C',dataPedido:'2026-06-27',entrega:'2026-06-28',pesoKg:471,valor:2502,status:'Em rota',pag:'Pendente',venc:'2026-07-19',recebDias:0,perdaKg:0,motivo:'—',itens:[{produtoId:2,nome:'Cebola',un:'KG',kg:450,preco:3.60,perdaKg:0},{produtoId:4,nome:'Alface',un:'CX',kg:21,preco:42,perdaKg:0}]}
-  ]; }
-  seedFuncionarios() { return [
-    {id:1,nome:'João Pereira',cargo:'Motorista',salario:2200,tel:'(41) 99900-1122',diaPag:5},
-    {id:2,nome:'Maria Souza',cargo:'Auxiliar de depósito',salario:1800,tel:'(41) 99911-3344',diaPag:5}
-  ]; }
-  seedBancos() { return [
-    {id:1,instituicao:'Sicredi',agencia:'0718',conta:'45120-3',apelido:'Conta principal',ativo:'sim',saldoInicial:8200},
-    {id:2,instituicao:'Caixa Econômica Federal',agencia:'1532',conta:'00987-1',apelido:'Folha de pagamento',ativo:'sim',saldoInicial:3500},
-    {id:3,instituicao:'XP Investimentos',agencia:'0001',conta:'3349821-0',apelido:'Reserva',ativo:'sim',saldoInicial:12000}
-  ]; }
   BANCOS_BR = [['001','Banco do Brasil'],['104','Caixa Econômica Federal'],['237','Bradesco'],['341','Itaú Unibanco'],['033','Santander'],['748','Sicredi'],['756','Sicoob'],['260','Nubank'],['077','Banco Inter'],['336','C6 Bank'],['102','XP Investimentos'],['208','BTG Pactual'],['290','PagBank'],['323','Mercado Pago'],['380','PicPay'],['212','Banco Original'],['041','Banrisul'],['070','BRB'],['004','Banco do Nordeste'],['085','Ailos'],['136','Unicred'],['422','Safra'],['655','Banco Votorantim'],['403','Cora'],['197','Stone'],['623','Banco Pan'],['746','Modal'],['218','BS2'],['999','Outro']];
   newBanco = () => {
     const id = (this.state.bancos.reduce((m,x)=>Math.max(m,x.id||0),0) || 0) + 1;
     this.setState({ modal:'banco', isEditing:false, draft:{ id, instituicao:'Sicredi', apelido:'', ativo:'sim', saldoInicial:'' } });
   };
   editBanco = (id) => { const b = this.state.bancos.find(x=>x.id===id); if (b) this.setState({ modal:'banco', isEditing:true, draft:{ ...b } }); };
-  seedVeiculos() { return [
-    {id:1,placa:'BRA2E19',marca:'Fiat',modelo:'Fiorino',ano:2021,ativo:'sim',obs:'Entregas urbanas'},
-    {id:2,placa:'QTX4B71',marca:'Mercedes',modelo:'Accelo 815',ano:2018,ativo:'sim',obs:'Coleta no Norte do PR'},
-    {id:3,placa:'AKD8C02',marca:'VW',modelo:'Saveiro',ano:2014,ativo:'nao',obs:''}
-  ]; }
-  seedLancamentos() { return [
-    {id:201,data:'2026-11-03',categoria:'Diária',diarista:'João Pereira',descricao:'Descarga do caminhão da CEASA',valor:120,funcionarioId:'',veiculoId:'',bancoId:'1'},
-    {id:202,data:'2026-11-08',categoria:'Diária',diarista:'Carla Mendes',descricao:'Separação de pedidos',valor:110,funcionarioId:'',veiculoId:'',bancoId:'1'},
-    {id:203,data:'2026-11-14',categoria:'Diária',diarista:'João Pereira',descricao:'Descarga do caminhão da CEASA',valor:120,funcionarioId:'',veiculoId:'',bancoId:'2'},
-    {id:204,data:'2026-11-15',categoria:'Diária',diarista:'Rafael Souza',descricao:'Entregas de sábado',valor:150,funcionarioId:'',veiculoId:'',bancoId:''},
-    {id:101,data:'2026-06-05',categoria:'Gasolina',descricao:'Tanque cheio',valor:310,funcionarioId:'',veiculoId:'1'},
-    {id:102,data:'2026-06-14',categoria:'Gasolina',descricao:'Diesel — coleta Norte PR',valor:890,funcionarioId:'',veiculoId:'2'},
-    {id:103,data:'2026-06-20',categoria:'Manutenção dos Carros',descricao:'Troca de óleo e filtros',valor:540,funcionarioId:'',veiculoId:'2'},
-    {id:104,data:'2026-07-02',categoria:'Multa',descricao:'Estacionamento em local proibido',valor:195,funcionarioId:'',veiculoId:'1'},
-    {id:105,data:'2026-07-09',categoria:'Gasolina',descricao:'Tanque cheio',valor:325,funcionarioId:'',veiculoId:'1'},
-    {id:1,data:'2026-06-08',categoria:'Frete',descricao:'Coleta Norte PR → Curitiba',valor:1280,funcionarioId:''},
-    {id:2,data:'2026-06-11',categoria:'Gasolina',descricao:'Entregas urbanas da semana',valor:620,funcionarioId:''},
-    {id:3,data:'2026-06-15',categoria:'Adiantamento de salário',descricao:'Adiantamento da quinzena',valor:700,funcionarioId:'2'},
-    {id:4,data:'2026-06-18',categoria:'Manutenção dos Carros',descricao:'Troca de óleo e filtro do caminhão',valor:480,funcionarioId:''},
-    {id:5,data:'2026-06-20',categoria:'Simples Nacional',descricao:'Guia de junho (4% s/ receita)',valor:1114,funcionarioId:''},
-    {id:6,data:'2026-06-25',categoria:'Vale-transporte',descricao:'Recarga dos cartões',valor:320,funcionarioId:''},
-    {id:7,data:'2026-06-30',categoria:'Salário',descricao:'Folha de junho (saldo)',valor:1100,funcionarioId:'2'}
-  ]; }
   _fmtDate(s) { return this._fmtDM(s); }
-  monthOf(d) { const s=String(d||''); const iso=s.match(/^\d{4}-(\d{2})/); if(iso)return iso[1]; const m=s.match(/\/(\d{2})/); return m ? m[1] : null; }
+  MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  /** 'aaaa-mm' de uma data ISO (o servidor sempre devolve datas ISO). */
+  anoMes(d) { const m = String(d||'').match(/^(\d{4})-(\d{2})/); return m ? m[1]+'-'+m[2] : null; }
   setPeriodo = (e) => this.setState({ periodo: e.target.value });
-  _load(key, fallback, validate) {
-    try {
-      const s = localStorage.getItem(key);
-      if (s) { const v = JSON.parse(s); if (!validate || validate(v)) return v; }
-    } catch (e) {}
-    const d = fallback();
-    this._save(key, d);
-    return d;
-  }
-  _save(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {} }
 
-  ADMIN_ONLY_SCREENS = ['dashboard','clientes','fornecedores','produtos','financeiro','relatorios','funcionarios','veiculos','bancos'];
-  nav(key) { this.setState({ screen: key, clienteView: 'list' }); }
+  ADMIN_ONLY_SCREENS = ['configuracoes','contas','dashboard','clientes','fornecedores','produtos','financeiro','relatorios','funcionarios','veiculos','bancos'];
+  nav(key) {
+    this.setState({ screen: key, clienteView: 'list', ...(key === 'configuracoes' ? { cfgDraft: this._cfgCopia() } : {}) });
+    if (key === 'configuracoes' && this.state.cfgTab === 'historico') this.carregarHistorico();
+  }
+
+  // ================================================================ configurações (metas, listas, usuários, histórico, backup)
+  /** Metas em vigor: o que foi salvo nas Configurações + padrão do estudo. */
+  _metas() { return { ...CONFIG_PADRAO.metas, ...((this.state.config && this.state.config.metas) || {}) }; }
+  _rotas() { return (this.state.config && this.state.config.rotas && this.state.config.rotas.length) ? this.state.config.rotas : CONFIG_PADRAO.rotas; }
+  _cfgCopia() {
+    const c = this.state.config || CONFIG_PADRAO;
+    return { metas: { ...this._metas() }, rotasTxt: this._rotas().join('\n'), empresaNome: (c.empresa && c.empresa.nome) || CONFIG_PADRAO.empresa.nome };
+  }
+  cfgSetTab = (t) => { this.setState({ cfgTab: t }); if (t === 'historico') this.carregarHistorico(); };
+  updateMeta = (e) => { const k = e.target.dataset.campo, v = e.target.value; this.setState(s => ({ cfgDraft: { ...s.cfgDraft, metas: { ...s.cfgDraft.metas, [k]: v } } })); };
+  updateRotas = (e) => { const v = e.target.value; this.setState(s => ({ cfgDraft: { ...s.cfgDraft, rotasTxt: v } })); };
+  updateEmpresa = (e) => { const v = e.target.value; this.setState(s => ({ cfgDraft: { ...s.cfgDraft, empresaNome: v } })); };
+  descartarConfig = () => this.setState({ cfgDraft: this._cfgCopia() });
+  salvarConfig = async () => {
+    const d = this.state.cfgDraft; if (!d || this.state.salvando) return;
+    const metas = {};
+    for (const [k, v] of Object.entries(d.metas)) metas[k] = parseFloat(String(v).replace(',', '.'));
+    this.setState({ salvando: true });
+    try {
+      const config = await api('PUT', '/api/configuracoes', {
+        metas, rotas: String(d.rotasTxt || '').split('\n').map(x => x.trim()).filter(Boolean), empresa: { nome: d.empresaNome },
+      });
+      this.setState({ config }, () => this.setState({ cfgDraft: this._cfgCopia() }));
+      this.avisar('Configurações salvas. Os indicadores já usam as novas metas.', 'ok');
+    } catch (e) { this.avisar(e); }
+    finally { this.setState({ salvando: false }); }
+  };
+  carregarHistorico = async () => {
+    try {
+      const f = this.state.histRecurso || '';
+      const rows = await api('GET', '/api/auditoria?limite=300' + (f ? '&recurso=' + encodeURIComponent(f) : ''));
+      this.setState({ auditoria: rows });
+    } catch (e) { this.avisar(e); }
+  };
+  setHistRecurso = (e) => this.setState({ histRecurso: e.target.value }, () => this.carregarHistorico());
+  baixarBackup = () => { window.location.href = '/api/backup'; };
+  newUsuario = () => this.setState({ modal:'usuario', isEditing:false, draft:{ nome:'', usuario:'', role:'colaborador', ativo:'sim', senha:'' } });
+  editUsuario = (id) => {
+    const u = (this.state.usuarios || []).find(x => x.id === id); if (!u) return;
+    this.setState({ modal:'usuario', isEditing:false, draft:{ ...u, ativo: u.ativo ? 'sim' : 'nao', senha:'' } });
+  };
+  abrirSenha = () => this.setState({ modal:'senha', isEditing:false, draft:{ atual:'', nova:'', confirma:'' } });
   setRelClientes = () => this.setState({ relView:'clientes' });
   setRelPedidos = () => this.setState({ relView:'pedidos' });
   setRelLanc = () => this.setState({ relView:'lanc' });
@@ -174,29 +219,31 @@ export class CrmApp extends Component<Record<string, never>, any> {
     document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 200);
   };
-  setRoleAdmin = () => this.setState({ role:'admin' });
+  setRoleAdmin = () => { if (this.state.user && this.state.user.role === 'admin') this.setState({ role:'admin' }); };
   setRoleColab = () => this.setState(s => ({ role:'colaborador', screen: this.ADMIN_ONLY_SCREENS.includes(s.screen) ? 'entradas' : s.screen }));
   openCliente(id) { this.setState({ screen: 'clientes', clienteView: 'detail', clienteId: id }); }
 
   healthOf(c, inadPct, ticketEntrega) {
     if (!c || !c.status) return 'green';
     if (c.status === 'inadimplente' || c.status === 'inativo') return 'red';
-    const inad = inadPct || 0, te = ticketEntrega || 0;
-    if (inad > 2 || (te > 0 && te < 150)) return 'red';
-    if (inad > 1 || (te > 0 && te < 430) || c.tend === '↓' || c.status === 'negociacao') return 'amber';
+    const inad = inadPct || 0, te = ticketEntrega || 0, M = this._metas();
+    if (inad > M.inadAlerta || (te > 0 && te < M.ticketEntregaRisco)) return 'red';
+    if (inad > M.inadMax || (te > 0 && te < M.ticketEntregaMin) || c.tend === '↓' || c.status === 'negociacao') return 'amber';
     return 'green';
   }
 
   newCliente = () => {
     const id = (this.state.clientes.reduce((m,x)=>Math.max(m,x.id),0) || 0) + 1;
-    this.setState({ modal:'cliente', isEditing:false, draft:{ id, nome:'', resp:'', cnpj:'', tel:'', email:'', endereco:'', rota:'Sul A', freq:'2×/sem · Seg e Qui', status:'ativo', ticketMes:0, ticketEntrega:0, volume:0,  cobranca:'Em dia', forma:'PIX', limite:0, prazo:14, tend:'→', ult:'—', obs:'' } });
+    this.setState({ modal:'cliente', isEditing:false, draft:{ id, nome:'', resp:'', cnpj:'', tel:'', email:'', endereco:'', rota:this._rotas()[0], freq:'2×/sem · Seg e Qui', status:'ativo', ticketMes:0, ticketEntrega:0, volume:0,  cobranca:'Em dia', forma:'PIX', limite:0, prazo:14, tend:'→', ult:'—', obs:'' } });
   };
   editCliente = (id) => { const c = this.state.clientes.find(x=>x.id===id); if (c) this.setState({ modal:'cliente', isEditing:true, draft:{ ...c } }); };
   editCurrentCliente = () => this.editCliente(this.state.clienteId);
-  deleteCurrentCliente = () => {
-    const list = this.state.clientes.filter(x=>x.id!==this.state.clienteId);
-    this._save('crm_hf_clientes_d3', list);
-    this.setState({ clientes:list, clienteView:'list', modal:null, draft:null });
+  deleteCurrentCliente = async () => {
+    if (!window.confirm('Excluir este cliente? Esta ação não pode ser desfeita.')) return;
+    try {
+      await this._excluir('cliente', this.state.clienteId);
+      this.setState({ clienteView:'list', modal:null, draft:null });
+    } catch (e) { this.avisar(e); }
   };
 
   newPedido = () => {
@@ -212,15 +259,16 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const nums = this.state.entradas.map(e=>parseInt(String(e.id).replace(/\D/g,''))||0);
     const id = 'C-' + ((nums.length?Math.max.apply(null,nums):1041) + 1);
     const f0 = this.state.fornecedores[0];
-    const nowd = new Date(); const hoje = String(nowd.getDate()).padStart(2,'0')+'/'+String(nowd.getMonth()+1).padStart(2,'0');
+    const hoje = this._hojeIso();
     this.setState({ modal:'entrada', isEditing:false, draft:{ id, fornecedor:f0?f0.nome:'', data:hoje, pesoKg:0, valor:0, perdaKg:0, motivo:'—', pago:'Pendente', dataPag:'', formaPag:'PIX', itens:[] } });
   };
   editEntrada = (id) => { const e = this.state.entradas.find(x=>x.id===id); if (e) this.setState({ modal:'entrada', isEditing:true, draft:{ ...e, itens:(e.itens||[]).map(i=>({...i})) } }); };
-  marcarEntradaPaga = (id, ev) => {
+  /** "Marcar pago" da compra: abre a baixa (data, forma e conta). */
+  marcarEntradaPaga = (id, ev) => this.openPagarEntrada(id, ev);
+  openPagarEntrada = (id, ev) => {
     if (ev && ev.stopPropagation) ev.stopPropagation();
-    const list = this.state.entradas.map(e => e.id===id ? { ...e, pago:'Pago' } : e);
-    this._save('crm_hf_entradas_d2', list);
-    this.setState({ entradas:list });
+    const e = this.state.entradas.find(x => x.id === id); if (!e) return;
+    this.setState({ modal:'pagarEntrada', isEditing:false, draft:{ id, dataPag:this._hojeIso(), forma:e.formaPag || 'PIX', bancoId:String(e.bancoId||'') } });
   };
   _parseDate(s){
     s = String(s||'');
@@ -237,10 +285,18 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const p = this.state.pedidos.find(x=>x.id===id); if (!p) return;
     const now = new Date();
     const hoje = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
-    this.setState({ modal:'pagamento', isEditing:false, draft:{ id, dataPag: p.dataPagIso || hoje, forma: p.formaPag || 'PIX' } });
+    this.setState({ modal:'pagamento', isEditing:false, draft:{ id, dataPag: p.dataPagIso || hoje, forma: p.formaPag || 'PIX', bancoId: String(p.bancoId||'') } });
   };
 
   addItem = () => this.setState(s => ({ draft:{ ...s.draft, itens:[ ...(s.draft.itens||[]), { produtoId:'', nome:'', un:'KG', kg:0, preco:0, perdaKg:0 } ] } }));
+
+  TIPOS_INTERACAO = ['Visita comercial','Ligação','Ligação de cobrança','WhatsApp','E-mail','Reclamação','Outro'];
+  INTERACAO_COR = { 'Visita comercial':'#2e8b4a', 'Ligação':'#2f6fb0', 'Ligação de cobrança':'#d6334a', 'WhatsApp':'#2f6fb0', 'E-mail':'#7a5d8f', 'Reclamação':'#c79320', 'Outro':'#6b7a6f' };
+  newInteracao = () => {
+    const c = this.state.clientes.find(x=>x.id===this.state.clienteId) || this.state.clientes[0]; if (!c) return;
+    this.setState({ modal:'interacao', isEditing:false, draft:{ clienteId:c.id, data:this._hojeIso(), tipo:'Visita comercial', texto:'' } });
+  };
+  editInteracao = (id) => { const i = (this.state.interacoes||[]).find(x=>x.id===id); if (i) this.setState({ modal:'interacao', isEditing:true, draft:{ ...i } }); };
 
   newPerda = () => {
     const id = (this.state.perdas.reduce((m,x)=>Math.max(m,x.id||0),0) || 0) + 1;
@@ -269,7 +325,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
 
   newFornecedor = () => {
     const id = (this.state.fornecedores.reduce((m,x)=>Math.max(m,x.id||0),0) || 0) + 1;
-    this.setState({ modal:'fornecedor', isEditing:false, draft:{ id, nome:'', regiao:'', contato:'', produtos:[] } });
+    this.setState({ modal:'fornecedor', isEditing:false, draft:{ id, nome:'', regiao:'', contato:'', prazo:0, produtos:[] } });
   };
   editFornecedor = (id) => { const f = this.state.fornecedores.find(x=>x.id===id); if (f) this.setState({ modal:'fornecedor', isEditing:true, draft:{ ...f, produtos:(f.produtos||[]).slice() } }); };
   toggleProdForn = (nome) => this.setState(s => {
@@ -298,7 +354,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
   newLancamento = (pre) => {
     const p = (pre && !pre.target) ? pre : null;
     const id = (this.state.lancamentos.reduce((m,x)=>Math.max(m,x.id||0),0) || 0) + 1;
-    this.setState({ modal:'lancamento', isEditing:false, draft: Object.assign({ id, data:this._hojeIso(), categoria:'Gasolina', descricao:'', valor:0, funcionarioId:'', veiculoId:'', bancoId:'' }, p||{}) });
+    this.setState({ modal:'lancamento', isEditing:false, draft: Object.assign({ id, data:this._hojeIso(), categoria:'Gasolina', descricao:'', valor:0, funcionarioId:'', veiculoId:'', bancoId:'', pago:'Pago', dataPag:'' }, p||{}) });
   };
   editLancamento = (id) => { const l = this.state.lancamentos.find(x=>x.id===id); if (l) this.setState({ modal:'lancamento', isEditing:true, draft:{ ...l } }); };
   toggleFunc = (id, ev) => {
@@ -307,7 +363,13 @@ export class CrmApp extends Component<Record<string, never>, any> {
   };
   newDiaria = () => {
     const id = (this.state.lancamentos.reduce((m,x)=>Math.max(m,x.id||0),0) || 0) + 1;
-    this.setState({ modal:'diaria', isEditing:false, draft:{ id, data:this._hojeIso(), categoria:'Diária', diarista:'', descricao:'', valor:'', funcionarioId:'', veiculoId:'', bancoId:'' } });
+    this.setState({ modal:'diaria', isEditing:false, draft:{ id, data:this._hojeIso(), categoria:'Diária', diarista:'', descricao:'', valor:'', funcionarioId:'', veiculoId:'', bancoId:'', pago:'Pendente', dataPag:'' } });
+  };
+  /** Abre o "Pagar" de uma conta a pagar (diária pendente). */
+  openPagarLanc = (id, ev) => {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const l = this.state.lancamentos.find(x=>x.id===id); if (!l) return;
+    this.setState({ modal:'pagarLanc', isEditing:false, draft:{ id, dataPag:this._hojeIso(), bancoId:String(l.bancoId||''), forma:'PIX', rotulo: l.categoria === 'Diária' ? 'diária' : 'conta' } });
   };
   editDiaria = (id) => { const l = this.state.lancamentos.find(x=>x.id===id); if (l) this.setState({ modal:'diaria', isEditing:true, draft:{ ...l } }); };
   newFuncionario = () => {
@@ -358,160 +420,131 @@ export class CrmApp extends Component<Record<string, never>, any> {
 
   _upsert(list, d, keyfn) { const i = list.findIndex(keyfn); if (i>=0) list[i]=d; else list.push(d); return list; }
 
-  saveDraft = () => {
-    const M = this.state.modal;
-    if (M === 'cliente') {
-      const d = { ...this.state.draft };
-      ['ticketMes','ticketEntrega','volume','limite','prazo','inad'].forEach(k => { d[k] = parseFloat(String(d[k]).replace(',','.')) || 0; });
-      const list = this.state.clientes.slice();
-      const i = list.findIndex(x=>x.id===d.id);
-      if (i>=0) list[i]=d; else list.push(d);
-      this._save('crm_hf_clientes_d3', list);
-      this.setState({ clientes:list, modal:null, draft:null, screen:'clientes', clienteView:'detail', clienteId:d.id });
-    } else if (M === 'pedido') {
-      const d = { ...this.state.draft };
-      ['recebDias'].forEach(k => { d[k] = parseFloat(String(d[k]).replace(',','.')) || 0; });
-      if (d.itens && d.itens.length) {
-        d.pesoKg = d.itens.reduce((s,i)=>s+(+i.kg||0),0);
-        d.valor = Math.round(d.itens.reduce((s,i)=>s+(+i.kg||0)*(+i.preco||0),0));
-        d.perdaKg = d.itens.reduce((s,i)=>s+(+i.perdaKg||0),0);
-      } else {
-        ['pesoKg','valor','perdaKg'].forEach(k => { d[k] = parseFloat(String(d[k]).replace(',','.')) || 0; });
+  saveDraft = async () => {
+    const M = this.state.modal, draft = this.state.draft;
+    if (!M || !draft || this.state.salvando) return;
+    const isNew = !this.state.isEditing;
+    const num = v => parseFloat(String(v).replace(',', '.')) || 0;
+    const fechar = (extra = {}) => this.setState({ modal:null, draft:null, aviso:null, ...extra });
+    this.setState({ salvando: true });
+    try {
+      if (M === 'cliente') {
+        const d = { ...draft };
+        ['limite','prazo'].forEach(k => { d[k] = num(d[k]); });
+        const saved = await this._gravar('clientes', d, isNew);
+        fechar({ screen:'clientes', clienteView:'detail', clienteId:saved.id });
+        if (!isNew) await this._recarregarDados();
+      } else if (M === 'pedido' || M === 'entrada') {
+        const d = { ...draft };
+        if (d.itens && d.itens.length) {
+          d.pesoKg = d.itens.reduce((s,i)=>s+(+i.kg||0),0);
+          d.valor = Math.round(d.itens.reduce((s,i)=>s+(+i.kg||0)*(+i.preco||0),0));
+          d.perdaKg = d.itens.reduce((s,i)=>s+(+i.perdaKg||0),0);
+        } else {
+          ['pesoKg','valor','perdaKg'].forEach(k => { d[k] = num(d[k]); });
+        }
+        if (M === 'pedido') {
+          d.recebDias = num(d.recebDias);
+          await this._gravar('pedidos', d, isNew, true);
+          fechar({ screen:'pedidos', periodo:'all' });
+        } else {
+          await this._gravar('entradas', d, isNew);
+          fechar({ screen:'entradas', periodo:'all' });
+        }
+      } else if (M === 'fornecedor') {
+        await this._gravar('fornecedores', { ...draft, produtos:(draft.produtos||[]).slice() }, isNew);
+        fechar();
+        if (!isNew) await this._recarregarDados();
+      } else if (M === 'produto') {
+        await this._gravar('produtos', { ...draft }, isNew);
+        fechar();
+        if (!isNew) await this._recarregarDados();
+      } else if (M === 'perda') {
+        await this._gravar('perdas', { ...draft, qtd: num(draft.qtd) }, isNew);
+        fechar();
+      } else if (M === 'lancamento') {
+        const d = { ...draft, valor: num(draft.valor) };
+        if (!this.VEIC_CATS.includes(d.categoria)) d.veiculoId = '';
+        if ((d.pago || 'Pago') === 'Pago' && !d.dataPag) d.dataPag = d.data;
+        if (d.pago === 'Pendente') d.dataPag = '';
+        await this._gravar('lancamentos', d, isNew);
+        fechar();
+      } else if (M === 'diaria') {
+        const d = { ...draft, categoria:'Diária', diarista:String(draft.diarista||'').trim(),
+          valor: parseFloat(String(draft.valor||'0').replace(/\./g,'').replace(',','.')) || 0 };
+        if (d.pago === 'Pago' && !d.dataPag) d.dataPag = this._hojeIso();
+        if (d.pago !== 'Pago') d.dataPag = '';
+        await this._gravar('lancamentos', d, isNew);
+        fechar();
+      } else if (M === 'pagarLanc') {
+        const l = this.state.lancamentos.find(x => x.id === draft.id);
+        if (l) {
+          await this._gravar('lancamentos', { ...l, pago:'Pago', dataPag:draft.dataPag, bancoId:draft.bancoId }, false);
+          this.avisar((l.categoria === 'Diária' ? 'Diária' : 'Conta') + ' paga.', 'ok');
+        }
+        this.setState({ modal:null, draft:null });
+      } else if (M === 'banco') {
+        const d = { ...draft, saldoInicial: parseFloat(String(draft.saldoInicial||'0').replace(/\./g,'').replace(',','.')) || 0 };
+        await this._gravar('bancos', d, isNew);
+        fechar();
+      } else if (M === 'veiculo') {
+        await this._gravar('veiculos', { ...draft, placa:String(draft.placa||'').toUpperCase().trim() }, isNew);
+        fechar();
+      } else if (M === 'funcionario') {
+        await this._gravar('funcionarios', { ...draft, salario: num(draft.salario) }, isNew);
+        fechar();
+      } else if (M === 'interacao') {
+        await this._gravar('interacoes', { ...draft }, isNew);
+        fechar();
+      } else if (M === 'usuario') {
+        const novo = draft.id == null;
+        const salvo = novo
+          ? await api('POST', '/api/usuarios', { nome:draft.nome, usuario:draft.usuario, role:draft.role, senha:draft.senha })
+          : await api('PUT', '/api/usuarios/' + draft.id, { nome:draft.nome, role:draft.role, ativo:draft.ativo, senha:draft.senha });
+        this.setState(s => {
+          const lista = (s.usuarios || []).slice(); const i = lista.findIndex(x => x.id === salvo.id);
+          if (i >= 0) lista[i] = salvo; else lista.push(salvo);
+          return { usuarios: lista, user: s.user && s.user.id === salvo.id ? { ...s.user, nome: salvo.nome } : s.user };
+        });
+        this.avisar(novo ? 'Usuário criado.' : 'Usuário atualizado.', 'ok');
+        this.setState({ modal:null, draft:null });
+      } else if (M === 'senha') {
+        if (!draft.nova || draft.nova !== draft.confirma) { this.avisar('A confirmação não confere com a nova senha.'); return; }
+        await api('POST', '/api/auth/senha', { atual:draft.atual, nova:draft.nova });
+        this.avisar('Senha alterada. As outras sessões abertas foram encerradas.', 'ok');
+        this.setState({ modal:null, draft:null });
+      } else if (M === 'pagamento') {
+        const p = this.state.pedidos.find(x => x.id === draft.id);
+        if (p) {
+          const rec = this._daysBetween(p.entrega, draft.dataPag);
+          await this._gravar('pedidos', { ...p, pag:'Pago', dataPagIso:draft.dataPag, dataPag:draft.dataPag, formaPag:draft.forma, bancoId:draft.bancoId,
+            recebDias: (rec!=null? rec : (p.recebDias>0? p.recebDias : 1)) }, false);
+          this.avisar('Recebimento registrado.', 'ok');
+        }
+        this.setState({ modal:null, draft:null });
+      } else if (M === 'pagarEntrada') {
+        const e = this.state.entradas.find(x => x.id === draft.id);
+        if (e) {
+          await this._gravar('entradas', { ...e, pago:'Pago', dataPag:draft.dataPag, formaPag:draft.forma, bancoId:draft.bancoId }, false);
+          this.avisar('Compra paga.', 'ok');
+        }
+        this.setState({ modal:null, draft:null });
       }
-      const list = this.state.pedidos.slice();
-      const i = list.findIndex(x=>x.id===d.id);
-      if (i>=0) list[i]=d; else list.unshift(d);
-      this._save('crm_hf_pedidos_d2', list);
-      this.setState({ pedidos:list, modal:null, draft:null, screen:'pedidos', periodo:'all' });
-    } else if (M === 'fornecedor') {
-      const d = { ...this.state.draft };
-      d.produtos = (d.produtos||[]).slice(); delete d.produtosTxt;
-      const list = this._upsert(this.state.fornecedores.slice(), d, x=>x.id===d.id);
-      this._save('crm_hf_fornec_d2', list);
-      this.setState({ fornecedores:list, modal:null, draft:null });
-    } else if (M === 'produto') {
-      const d = { ...this.state.draft };
-      ['compra','venda'].forEach(k => { d[k] = parseFloat(String(d[k]).replace(',','.')) || 0; });
-      const list = this._upsert(this.state.produtos.slice(), d, x=>x.id===d.id);
-      this._save('crm_hf_produtos_d3', list);
-      this.setState({ produtos:list, modal:null, draft:null });
-    } else if (M === 'perda') {
-      const d = { ...this.state.draft };
-      d.qtd = parseFloat(String(d.qtd).replace(',','.')) || 0;
-      const list = this._upsert(this.state.perdas.slice(), d, x=>x.id===d.id);
-      this._save('crm_hf_perdas_d1', list);
-      this.setState({ perdas:list, modal:null, draft:null });
-    } else if (M === 'lancamento') {
-      const d = { ...this.state.draft };
-      d.valor = parseFloat(String(d.valor).replace(',','.')) || 0;
-      if (!this.VEIC_CATS.includes(d.categoria)) d.veiculoId = '';
-      const list = this._upsert(this.state.lancamentos.slice(), d, x=>x.id===d.id);
-      this._save('crm_hf_lanc_d3', list);
-      this.setState({ lancamentos:list, modal:null, draft:null });
-    } else if (M === 'diaria') {
-      const d = { ...this.state.draft, categoria:'Diária' };
-      d.valor = parseFloat(String(d.valor||'0').replace(/\./g,'').replace(',','.')) || 0;
-      d.diarista = String(d.diarista||'').trim();
-      const list = this._upsert(this.state.lancamentos.slice(), d, x=>x.id===d.id);
-      this._save('crm_hf_lanc_d3', list);
-      this.setState({ lancamentos:list, modal:null, draft:null });
-    } else if (M === 'banco') {
-      const d = { ...this.state.draft };
-      d.saldoInicial = parseFloat(String(d.saldoInicial||'0').replace(/\./g,'').replace(',','.')) || 0;
-      const list = this._upsert(this.state.bancos.slice(), d, x=>x.id===d.id);
-      this._save('crm_hf_bancos_d1', list);
-      this.setState({ bancos:list, modal:null, draft:null });
-    } else if (M === 'veiculo') {
-      const d = { ...this.state.draft };
-      d.placa = String(d.placa||'').toUpperCase().trim(); d.ano = parseInt(d.ano,10) || '';
-      const list = this._upsert(this.state.veiculos.slice(), d, x=>x.id===d.id);
-      this._save('crm_hf_veic_d1', list);
-      this.setState({ veiculos:list, modal:null, draft:null });
-    } else if (M === 'funcionario') {
-      const d = { ...this.state.draft };
-      d.salario = parseFloat(String(d.salario).replace(',','.')) || 0;
-      const list = this._upsert(this.state.funcionarios.slice(), d, x=>x.id===d.id);
-      this._save('crm_hf_func_d2', list);
-      this.setState({ funcionarios:list, modal:null, draft:null });
-    } else if (M === 'entrada') {
-      const d = { ...this.state.draft };
-      if (d.itens && d.itens.length) {
-        d.pesoKg = d.itens.reduce((s,i)=>s+(+i.kg||0),0);
-        d.valor = Math.round(d.itens.reduce((s,i)=>s+(+i.kg||0)*(+i.preco||0),0));
-        d.perdaKg = d.itens.reduce((s,i)=>s+(+i.perdaKg||0),0);
-      } else {
-        ['pesoKg','valor','perdaKg'].forEach(k => { d[k] = parseFloat(String(d[k]).replace(',','.')) || 0; });
-      }
-      const list = this._upsert(this.state.entradas.slice(), d, x=>x.id===d.id);
-      this._save('crm_hf_entradas_d2', list);
-      this.setState({ entradas:list, modal:null, draft:null, screen:'entradas', periodo:'all' });
-    } else if (M === 'pagamento') {
-      const d = this.state.draft;
-      const list = this.state.pedidos.map(p => {
-        if (p.id !== d.id) return p;
-        const rec = this._daysBetween(p.entrega, d.dataPag);
-        return { ...p, pag:'Pago', dataPagIso:d.dataPag, dataPag:this._fmtDM(d.dataPag), formaPag:d.forma, recebDias: (rec!=null? rec : (p.recebDias>0? p.recebDias : 1)) };
-      });
-      this._save('crm_hf_pedidos_d2', list);
-      this.setState({ pedidos:list, modal:null, draft:null });
+    } catch (e) {
+      this.avisar(e);
+    } finally {
+      this.setState({ salvando: false });
     }
   };
 
-  deleteFromModal = () => {
-    const d = this.state.draft, M = this.state.modal; if (!d) return;
-    if (M === 'diaria') {
-      const list = this.state.lancamentos.filter(x=>x.id!==d.id);
-      this._save('crm_hf_lanc_d3', list);
-      this.setState({ lancamentos:list, modal:null, draft:null });
-      return;
-    }
-    if (M === 'banco') {
-      const list = this.state.bancos.filter(x=>x.id!==d.id);
-      const lancs = this.state.lancamentos.map(l => String(l.bancoId||'')===String(d.id) ? { ...l, bancoId:'' } : l);
-      this._save('crm_hf_bancos_d1', list); this._save('crm_hf_lanc_d3', lancs);
-      this.setState({ bancos:list, lancamentos:lancs, modal:null, draft:null });
-      return;
-    }
-    if (M === 'veiculo') {
-      const list = this.state.veiculos.filter(x=>x.id!==d.id);
-      const lancs = this.state.lancamentos.map(l => String(l.veiculoId||'')===String(d.id) ? { ...l, veiculoId:'' } : l);
-      this._save('crm_hf_veic_d1', list); this._save('crm_hf_lanc_d3', lancs);
-      this.setState({ veiculos:list, lancamentos:lancs, modal:null, draft:null });
-      return;
-    }
-    if (M === 'cliente') {
-      const list = this.state.clientes.filter(x=>x.id!==d.id);
-      this._save('crm_hf_clientes_d3', list);
-      this.setState({ clientes:list, modal:null, draft:null, clienteView:'list' });
-    } else if (M === 'pedido') {
-      const list = this.state.pedidos.filter(x=>x.id!==d.id);
-      this._save('crm_hf_pedidos_d2', list);
-      this.setState({ pedidos:list, modal:null, draft:null });
-    } else if (M === 'fornecedor') {
-      const list = this.state.fornecedores.filter(x=>x.id!==d.id);
-      this._save('crm_hf_fornec_d2', list);
-      this.setState({ fornecedores:list, modal:null, draft:null });
-    } else if (M === 'produto') {
-      const list = this.state.produtos.filter(x=>x.id!==d.id);
-      this._save('crm_hf_produtos_d3', list);
-      this.setState({ produtos:list, modal:null, draft:null });
-    } else if (M === 'perda') {
-      const list = this.state.perdas.filter(x=>x.id!==d.id);
-      this._save('crm_hf_perdas_d1', list);
-      this.setState({ perdas:list, modal:null, draft:null });
-    } else if (M === 'lancamento') {
-      const list = this.state.lancamentos.filter(x=>x.id!==d.id);
-      this._save('crm_hf_lanc_d3', list);
-      this.setState({ lancamentos:list, modal:null, draft:null });
-    } else if (M === 'funcionario') {
-      const list = this.state.funcionarios.filter(x=>x.id!==d.id);
-      this._save('crm_hf_func_d2', list);
-      this.setState({ funcionarios:list, modal:null, draft:null });
-    } else if (M === 'entrada') {
-      const list = this.state.entradas.filter(x=>x.id!==d.id);
-      this._save('crm_hf_entradas_d2', list);
-      this.setState({ entradas:list, modal:null, draft:null });
-    }
+  deleteFromModal = async () => {
+    const d = this.state.draft, M = this.state.modal;
+    if (!d || !COLS[M]) return;
+    if (!window.confirm('Excluir este registro? Esta ação não pode ser desfeita.')) return;
+    try {
+      await this._excluir(M, d.id);
+      this.setState({ modal:null, draft:null, ...(M === 'cliente' ? { clienteView:'list' } : {}) });
+    } catch (e) { this.avisar(e); }
   };
 
   closeModal = () => this.setState({ modal:null, draft:null });
@@ -532,6 +565,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
   pPagBg(s){ return ({Pago:this.GBG,Pendente:this.ABG,Atrasado:this.RBG,'—':'#f0f3ed'})[s]; }
 
   renderVals() {
+    const M = this._metas(); // metas e limites (Configurações)
     const S = (this.ADMIN_ONLY_SCREENS.includes(this.state.screen) && this.state.role!=='admin') ? 'entradas' : this.state.screen;
     const isAdmin = this.state.role === 'admin';
     let navDefs = [
@@ -546,7 +580,9 @@ export class CrmApp extends Component<Record<string, never>, any> {
       { key:'veiculos', label:'Veículos', badge:'' },
       { key:'bancos', label:'Bancos', badge:'' },
       { key:'financeiro', label:'Financeiro', badge:'' },
-      { key:'relatorios', label:'Relatórios', badge:'' }
+      { key:'contas', label:'Contas a pagar/receber', badge:'' },
+      { key:'relatorios', label:'Relatórios', badge:'' },
+      { key:'configuracoes', label:'Configurações', badge:'' }
     ];
     if (!isAdmin) navDefs = navDefs.filter(n => !this.ADMIN_ONLY_SCREENS.includes(n.key));
     const navItems = navDefs.map(n => {
@@ -569,6 +605,8 @@ export class CrmApp extends Component<Record<string, never>, any> {
       funcionarios:['Funcionários','Salários, adiantamentos e valores a pagar'],
       veiculos:['Veículos','Frota — gasolina, manutenção e multas por carro'],
       bancos:['Bancos','Contas da empresa — de onde sai cada lançamento'],
+      configuracoes:['Configurações','Metas dos indicadores, listas, usuários, histórico de alterações e backup'],
+      contas:['Contas a pagar e receber','Tudo em aberto por vencimento — cada baixa sai ou entra numa conta'],
       financeiro:['Financeiro','Resultado, ciclo de caixa e lançamentos de custos'],
       relatorios:['Relatórios','Clientes, pedidos e lançamentos do período']
     };
@@ -581,10 +619,17 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const totalTicket = clientesRaw.reduce((s,x)=>s+(x.ticketMes||0),0) || 1;
     const ativos = clientesRaw.filter(x=>x.status==='ativo');
     const nAtivos = ativos.length;
-    const periodo = this.state.periodo;
-    const periodOptions = [ {v:'all',l:'Todos os períodos'}, {v:'06',l:'Junho 2026'}, {v:'05',l:'Maio 2026'}, {v:'04',l:'Abril 2026'} ];
-    const periodLabel = (periodOptions.find(o=>o.v===periodo)||periodOptions[1]).l;
-    const pedidosPeriodo = periodo==='all' ? pedidosRaw : pedidosRaw.filter(p=>this.monthOf(p.entrega)===periodo);
+    // períodos: todo mês (ano+mês) que tem movimento, mais o mês atual — do mais recente ao mais antigo
+    const mesesComDados = new Set<string>([this._hojeIso().slice(0,7)]);
+    [ ...pedidosRaw.map(p=>p.entrega), ...this.state.entradas.map(e=>e.data),
+      ...this.state.lancamentos.map(l=>l.data), ...(this.state.perdas||[]).map(p=>p.data) ]
+      .forEach(d => { const k = this.anoMes(d); if (k) mesesComDados.add(k); });
+    const periodOptions = [ {v:'all',l:'Todos os períodos'} ].concat(
+      [...mesesComDados].sort().reverse().map(k => ({ v:k, l:this.MESES[+k.slice(5,7)-1]+' '+k.slice(0,4) })));
+    // período escolhido que deixou de existir (ex.: dados excluídos) volta para "todos"
+    const periodo = periodOptions.some(o=>o.v===this.state.periodo) ? this.state.periodo : 'all';
+    const periodLabel = (periodOptions.find(o=>o.v===periodo)||periodOptions[0]).l;
+    const pedidosPeriodo = periodo==='all' ? pedidosRaw : pedidosRaw.filter(p=>this.anoMes(p.entrega)===periodo);
     const entregues = pedidosPeriodo.filter(p=>p.status==='Entregue');
     const receitaFat = entregues.reduce((s,p)=>s+(p.valor||0),0);
     const aReceber = pedidosPeriodo.filter(p=>p.pag==='Atrasado'||p.pag==='Pendente').reduce((s,p)=>s+(p.valor||0),0);
@@ -594,9 +639,9 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const inadMedia = receitaFat>0 ? valorAtraso/receitaFat*100 : 0;
     // perda sobre o que foi COMPRADO: na coleta (entrada) + no depósito depois
     const entradasRaw = this.state.entradas;
-    const entradasPeriodo = periodo==='all' ? entradasRaw : entradasRaw.filter(en=>this.monthOf(en.data)===periodo);
+    const entradasPeriodo = periodo==='all' ? entradasRaw : entradasRaw.filter(en=>this.anoMes(en.data)===periodo);
     const entKgTot = entradasPeriodo.reduce((s,en)=>s+(en.pesoKg||0),0);
-    const perdasDep = periodo==='all' ? (this.state.perdas||[]) : (this.state.perdas||[]).filter(p=>this.monthOf(p.data)===periodo);
+    const perdasDep = periodo==='all' ? (this.state.perdas||[]) : (this.state.perdas||[]).filter(p=>this.anoMes(p.data)===periodo);
     const perdaDepTot = perdasDep.reduce((s,p)=>s+(+p.qtd||0),0);
     const entPerdaTot = entradasPeriodo.reduce((s,en)=>s+(en.perdaKg||0),0) + perdaDepTot;
     const perdaMedia = entKgTot ? (entPerdaTot/entKgTot*100) : 0;
@@ -604,7 +649,9 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const nEntregas = entregues.length;
     const clientesAtendidos = new Set(entregues.map(p=>p.cliente)).size;
     const ticketEntregaReal = nEntregas ? receitaFat / nEntregas : 0;
-    const ticketMesReal = clientesAtendidos ? receitaFat / clientesAtendidos : 0;
+    // "por mês": em "Todos os períodos" divide pelo nº de meses com entrega (média mensal)
+    const nMeses = periodo==='all' ? Math.max(1, new Set(entregues.map(p=>this.anoMes(p.entrega)).filter(Boolean)).size) : 1;
+    const ticketMesReal = clientesAtendidos ? receitaFat / clientesAtendidos / nMeses : 0;
     const cd = clientesRaw;
     // faturado e nº de entregas por cliente (pedidos entregues no período)
     const fatByClient = {}, entByClient = {}, atrasoByClient = {};
@@ -620,10 +667,10 @@ export class CrmApp extends Component<Record<string, never>, any> {
       return { nome:c.nome, resp:c.resp, rota:c.rota, freq:c.freq, statusLabel:st.l,
         ticketMes: !isAdmin? '—' : (cFat? 'R$ '+cFat.toLocaleString('pt-BR'):'—'),
         ticketEntrega: !isAdmin? '—' : (cTE? 'R$ '+cTE.toLocaleString('pt-BR'):'—'),
-        entregaColor: !isAdmin? '#6b7a6f' : (cTE>=430? this.GREEN : (cTE>=150? this.AMBER : this.RED)),
+        entregaColor: !isAdmin? '#6b7a6f' : (cTE>=M.ticketEntregaMin?this.GREEN:(cTE>=M.ticketEntregaRisco? this.AMBER : this.RED)),
         part: !isAdmin? '—' : (receitaFat? Math.round(cFat/receitaFat*100):0)+'%',
         inad: !isAdmin? '—' : cIn.toFixed(1).replace('.',',')+'%',
-        inadColor: !isAdmin? '#6b7a6f' : (cIn<=1? this.GREEN : (cIn<=2? this.AMBER : this.RED)),
+        inadColor: !isAdmin? '#6b7a6f' : (cIn<=M.inadMax?this.GREEN:(cIn<=M.inadAlerta? this.AMBER : this.RED)),
         tend:c.tend, healthColor:hm.c, healthBg:hm.bg, healthLabel:hm.l,
         open:() => this.openCliente(c.id) };
     });
@@ -653,39 +700,42 @@ export class CrmApp extends Component<Record<string, never>, any> {
     // TODO5: última compra automática
     const cUltPed = cAllPeds.filter(p=>p.status==='Entregue').sort((a,b)=>(b.entrega||'').localeCompare(a.entrega||''))[0];
     const cUlt = cUltPed ? this._fmtDate(cUltPed.entrega) : '—';
+    // cliente desde: o que vier antes — cadastro no sistema ou primeiro pedido
+    const cInicio = [c.desde, ...cAllPeds.map(p=>p.dataPedido||p.entrega)].filter(Boolean).sort()[0];
+    const cDesde = cInicio ? this.MESES[+cInicio.slice(5,7)-1].slice(0,3).toLowerCase()+'/'+cInicio.slice(0,4) : '—';
     const initials = (c.nome||'').split(' ').filter(w=>w.length>2).slice(0,2).map(w=>w[0]).join('').toUpperCase();
     const sel = {
       nome:c.nome, resp:c.resp, cnpj:c.cnpj, tel:c.tel, endereco:c.endereco, initials,
       statusLabel:stc.l, healthColor:hmc.c, healthBg:hmc.bg, healthFull:hmc.f, obs:c.obs,
       metricas:[
         { label:'Qtd no período', value:cVolume.toLocaleString('pt-BR'), sub:cEntregues.length+' entrega(s)', color:'#16241b' },
-        { label:'Faturado / mês', value:'R$ '+cFaturado.toLocaleString('pt-BR'), sub:'meta R$ 3.500–3.800', color: cFaturado>=3500?this.GREEN:(cFaturado>=2000?this.AMBER:this.RED) },
-        { label:'Ticket/entrega', value:'R$ '+cTicketEntrega.toLocaleString('pt-BR'), sub:'meta ≥ R$ 430', color: cTicketEntrega>=430?this.GREEN:(cTicketEntrega>=150?this.AMBER:this.RED) },
+        { label:'Faturado / mês', value:'R$ '+Math.round(cFaturado/nMeses).toLocaleString('pt-BR'), sub:(nMeses>1?'média de '+nMeses+' meses · ':'')+'meta R$ '+M.ticketMesMin.toLocaleString('pt-BR')+'–'+M.ticketMesMax.toLocaleString('pt-BR'), color: cFaturado/nMeses>=M.ticketMesMin?this.GREEN:(cFaturado/nMeses>=M.ticketMesAlerta?this.AMBER:this.RED) },
+        { label:'Ticket/entrega', value:'R$ '+cTicketEntrega.toLocaleString('pt-BR'), sub:'meta ≥ R$ '+M.ticketEntregaMin.toLocaleString('pt-BR'), color: cTicketEntrega>=M.ticketEntregaMin?this.GREEN:(cTicketEntrega>=M.ticketEntregaRisco?this.AMBER:this.RED) },
         { label:'% do faturamento', value:cPart+'%', sub:'risco de concentração', color:'#16241b' },
         { label:'Última compra', value:cUlt, sub:'do último pedido entregue', color:'#16241b' },
-        { label:'Inadimplência', value:cInad.toFixed(1).replace('.',',')+'%', sub:'meta ≤ 1% · '+cAtrasados.length+' atraso(s)', color: cInad<=1?this.GREEN:(cInad<=2?this.AMBER:this.RED) }
+        { label:'Inadimplência', value:cInad.toFixed(1).replace('.',',')+'%', sub:'meta ≤ '+M.inadMax+'% · '+cAtrasados.length+' atraso(s)', color: cInad<=M.inadMax?this.GREEN:(cInad<=M.inadAlerta?this.AMBER:this.RED) }
       ],
       cadastro:[
         { k:'Região / rota', v:c.rota }, { k:'Frequência', v:c.freq },
         { k:'Status', v:stc.l }, { k:'Forma de pagto', v:c.forma },
-        { k:'Cliente desde', v:'mar/2025' }, { k:'Sequência na rota', v:'#'+c.id }
+        { k:'Cliente desde', v:cDesde }, { k:'Código', v:'#'+c.id }
       ],
       credito:[
         { k:'Limite de crédito', v:'R$ '+c.limite.toLocaleString('pt-BR'), color:'#16241b' },
         { k:'Prazo de pagamento', v:c.prazo+' dias', color:'#16241b' },
-        { k:'Taxa de inadimplência', v:cInad.toFixed(1).replace('.',',')+'%', color: cInad<=1?this.GREEN:(cInad<=2?this.AMBER:this.RED) },
+        { k:'Taxa de inadimplência', v:cInad.toFixed(1).replace('.',',')+'%', color: cInad<=M.inadMax?this.GREEN:(cInad<=M.inadAlerta?this.AMBER:this.RED) },
         { k:'Status de cobrança', v:cCobranca, color: cCobranca==='Em dia'?this.GREEN:this.RED },
         { k:'Histórico de atrasos', v: cAtrasados.length===0 ? '0 atrasos' : (cAtrasados.length+' pedido(s) · R$ '+cAtrasados.reduce((s,p)=>s+(p.valor||0),0).toLocaleString('pt-BR')), color: cAtrasados.length? this.RED : '#16241b' }
       ],
       pedidos: pedidosRaw.filter(p => p.cliente===c.nome).slice(0,4).map(p => ({
-        id:p.id, data:p.entrega, peso:(p.pesoKg||0).toLocaleString('pt-BR'), valor:'R$ '+(p.valor||0).toLocaleString('pt-BR'), status:p.status,
+        id:p.id, data:this._fmtDate(p.entrega), peso:(p.pesoKg||0).toLocaleString('pt-BR'), valor:'R$ '+(p.valor||0).toLocaleString('pt-BR'), status:p.status,
         statusColor:this.pStatusColor(p.status), statusBg:this.pStatusBg(p.status)
       })),
-      interacoes:[
-        { tipo:'Visita comercial', data:c.ult, por:'Equipe', texto:'Conferência de gôndola e ajuste de pedido. Cliente pediu mais folhosas.', color:this.GREEN },
-        { tipo:'Ligação de cobrança', data:'19/06', por:'Admin', texto: cAtrasados.length>0?'Boleto em atraso — combinado pagamento via PIX até sexta.':'Confirmação de recebimento — tudo em dia.', color: cAtrasados.length>0?this.RED:this.GREEN },
-        { tipo:'WhatsApp', data:'10/06', por:'Admin', texto:'Envio da tabela de preços da semana e disponibilidade de batata.', color:'#2f6fb0' }
-      ]
+      // histórico real, registrado pela equipe (mais recente primeiro)
+      interacoes: (this.state.interacoes||[]).filter(i => i.clienteId === c.id)
+        .slice().sort((a,b)=>String(b.data).localeCompare(String(a.data)) || b.id-a.id)
+        .map(i => ({ tipo:i.tipo, data:this._fmtDate(i.data), por:i.autorNome||'—', texto:i.texto,
+          color: this.INTERACAO_COR[i.tipo] || '#6b7a6f', edit:() => this.editInteracao(i.id) }))
     };
     if (sel.pedidos.length === 0) sel.pedidos = [{ id:'—', data:'—', peso:'—', valor:'sem pedidos no período', status:'—', statusColor:'#6b7a6f', statusBg:'#f0f3ed' }];
 
@@ -702,8 +752,8 @@ export class CrmApp extends Component<Record<string, never>, any> {
 
     // ---- itens do pedido (form) ----
     let itemRows = [], noItens = false, pedTotals = { peso:'0 kg', valor:'R$ 0', perdaKg:'0 kg', perdaPct:'0%', perdaColor:this.GREEN };
-    let entTotals = { peso:'0 kg', valor:'R$ 0' };
-    let estoqueAlertas = [], temAlertaEstoque = false;
+    let entTotals: any = { peso:'0 kg', valor:'R$ 0' };
+    const estoqueAlertas = []; let temAlertaEstoque = false;
     if ((this.state.modal === 'pedido' || this.state.modal === 'entrada') && this.state.draft) {
       const its = this.state.draft.itens || [];
       const isVenda = this.state.modal === 'pedido';
@@ -715,7 +765,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
         if (falta) estoqueAlertas.push({ txt:(it.nome||'item')+': pedindo '+(+it.kg||0).toLocaleString('pt-BR')+' '+(it.un||'KG')+', disponível '+disp.toLocaleString('pt-BR') });
         return { idx:i, produtoId:String(it.produtoId||''), un:it.un||'KG', kg:it.kg, preco:it.preco, perdaKg:it.perdaKg,
           perdaPct: it.kg ? pct.toFixed(1).replace('.',',')+'%' : '—',
-          perdaColor: pct<=10?this.GREEN:(pct<=15?this.AMBER:this.RED),
+          perdaColor: pct<=M.perdaMax?this.GREEN:(pct<=M.perdaAlerta?this.AMBER:this.RED),
           dispTxt: disp==null ? '' : (disp.toLocaleString('pt-BR')+' disp.'),
           dispColor: falta ? this.RED : '#6b7a6f',
           kgBorder: falta ? '#d6334a' : '#d3dbcf',
@@ -729,17 +779,30 @@ export class CrmApp extends Component<Record<string, never>, any> {
       const ppct = pk ? pp/pk*100 : 0;
       pedTotals = { peso:pk.toLocaleString('pt-BR'), valor:'R$ '+Math.round(pv).toLocaleString('pt-BR'),
         perdaKg:pp.toLocaleString('pt-BR'), perdaPct:ppct.toFixed(1).replace('.',',')+'%',
-        perdaColor: ppct<=10?this.GREEN:(ppct<=15?this.AMBER:this.RED) };
+        perdaColor: ppct<=M.perdaMax?this.GREEN:(ppct<=M.perdaAlerta?this.AMBER:this.RED) };
       entTotals = { peso:pk.toLocaleString('pt-BR'), valor:'R$ '+Math.round(pv).toLocaleString('pt-BR'),
         perdaKg:pp.toLocaleString('pt-BR'), perdaPct:ppct.toFixed(1).replace('.',',')+'%',
-        perdaColor: ppct<=10?this.GREEN:(ppct<=15?this.AMBER:this.RED) };
+        perdaColor: ppct<=M.perdaMax?this.GREEN:(ppct<=M.perdaAlerta?this.AMBER:this.RED) };
     }
 
     // ---- financeiro (vivo, a partir dos pedidos + lançamentos) ----
     const fmtBR = n => Math.round(n).toLocaleString('pt-BR');
     const compraMercadoria = entradasPeriodo.reduce((s,en)=>s+(en.valor||0),0);
     const lancRaw = this.state.lancamentos;
-    const lancPeriodo = periodo==='all' ? lancRaw : lancRaw.filter(l=>this.monthOf(l.data)===periodo);
+    const lancPeriodo = periodo==='all' ? lancRaw : lancRaw.filter(l=>this.anoMes(l.data)===periodo);
+    // contas a pagar: lançamento 'Pendente' é custo do período, mas ainda não saiu do caixa
+    const lancPago = l => (l.pago || 'Pago') === 'Pago';
+    const lancPagos = lancRaw.filter(lancPago);
+    // ---- movimento de caixa por conta: tudo que já foi recebido ou pago (conta '' = caixa) ----
+    const movs = [];
+    pedidosRaw.filter(p=>p.pag==='Pago').forEach(p => movs.push({ conta:String(p.bancoId||''), d:p.dataPagIso||p.entrega, ent:p.valor||0, sai:0, origem:'Venda '+p.id+' — '+p.cliente }));
+    entradasRaw.filter(e=>e.pago==='Pago').forEach(e => movs.push({ conta:String(e.bancoId||''), d:e.dataPag||e.data, ent:0, sai:e.valor||0, origem:'Compra '+e.id+' — '+e.fornecedor }));
+    lancPagos.forEach(l => movs.push({ conta:String(l.bancoId||''), d:l.dataPag||l.data, ent:0, sai:l.valor||0, origem:l.categoria+(l.diarista?' — '+l.diarista:'')+(l.descricao?' — '+l.descricao:'') }));
+    const movsPeriodo = periodo==='all' ? movs : movs.filter(m=>this.anoMes(m.d)===periodo);
+    const nomeConta = id => { const b = this.state.bancos.find(x=>String(x.id)===String(id)); return b ? b.instituicao : 'Caixa'; };
+    const somaConta = (lista, conta) => lista.filter(m=>m.conta===conta).reduce((a,m)=>({ ent:a.ent+m.ent, sai:a.sai+m.sai, n:a.n+1 }), { ent:0, sai:0, n:0 });
+    const fmtSaldo = v => (v<0?'−R$ ':'R$ ')+Number(Math.abs(v)).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const caixaPer = somaConta(movsPeriodo, ''), caixaTot = somaConta(movs, '');
     const VCOR = { 'Gasolina':['#8a5a2a','#f7f4ec'], 'Manutenção dos Carros':['#17642f','#e7f1e8'], 'Multa':['#b3283d','#fbe7ea'] };
     const brMoney = n => 'R$ ' + Number(n||0).toLocaleString('pt-BR',{minimumFractionDigits:2, maximumFractionDigits:2});
     const ddmm = iso => { const m = String(iso||'').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[3]+'/'+m[2] : String(iso||''); };
@@ -773,34 +836,38 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const noVeic = this.state.veiculos.length === 0;
     const bCod = n => (this.BANCOS_BR.find(x=>x[1]===n)||['—'])[0];
     const bancoRows = this.state.bancos.map(b => {
-      const meus = lancPeriodo.filter(l => String(l.bancoId||'')===String(b.id));
+      const per = somaConta(movsPeriodo, String(b.id)), tot = somaConta(movs, String(b.id));
+      const saldoV = (+b.saldoInicial||0) + tot.ent - tot.sai;
       const sig = String(b.instituicao||'?').split(/\s+/).filter(w=>w.length>2||/^[A-Z]/.test(w)).slice(0,2).map(w=>w[0]).join('').toUpperCase();
       return { nome:b.instituicao, codigo:'Cód. '+bCod(b.instituicao), sigla:sig, conta:[b.agencia,b.conta].filter(Boolean).join(' / ')||'—', apelido:b.apelido||'—', inativo:b.ativo==='nao',
-        saidas:brMoney(meus.reduce((s,l)=>s+(l.valor||0),0)), qtd:String(meus.length), edit:()=>this.editBanco(b.id),
-        ...(() => { const v = (+b.saldoInicial||0) - this.state.lancamentos.filter(l=>String(l.bancoId||'')===String(b.id)).reduce((s,l)=>s+(l.valor||0),0); return { saldo:(v<0?'−R$ ':'R$ ')+Number(Math.abs(v)).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}), saldoColor: v<0?'#b3283d':'#16241b' }; })() };
+        entradas:brMoney(per.ent), saidas:brMoney(per.sai), qtd:String(per.n), edit:()=>this.editBanco(b.id),
+        saldo:fmtSaldo(saldoV), saldoColor: saldoV<0?'#b3283d':'#16241b' };
     });
-    const semB = lancPeriodo.filter(l => !l.bancoId);
     const WDS = ['dom','seg','ter','qua','qui','sex','sáb'];
     const diarPer = lancPeriodo.filter(l => l.categoria==='Diária').slice().sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')));
     const diariaRows = diarPer.map(l => { const bk = this.state.bancos.find(b=>String(b.id)===String(l.bancoId||'')); const dt = new Date(String(l.data)+'T12:00:00').getTime();
       return { data: ddmm(l.data), semana: isNaN(dt) ? '' : WDS[new Date(dt).getDay()], diarista: l.diarista || '—', servico: l.descricao || '—', valor: brMoney(l.valor),
-        banco: bk ? bk.instituicao : 'Sem banco', bancoColor: bk ? '#435349' : '#9aa69d', edit: () => this.editDiaria(l.id) }; });
+        banco: bk ? bk.instituicao : 'Sem banco', bancoColor: bk ? '#435349' : '#9aa69d', edit: () => this.editDiaria(l.id),
+        paga: lancPago(l), situacao: lancPago(l) ? 'Paga' : 'A pagar',
+        situacaoColor: lancPago(l) ? this.GREEN : this.AMBER, situacaoBg: lancPago(l) ? this.GBG : this.ABG,
+        pagInfo: lancPago(l) && l.dataPag ? 'em ' + ddmm(l.dataPag) : '',
+        pagar: ev => this.openPagarLanc(l.id, ev) }; });
     const diariaStats = [
       { label:'Diárias lançadas', value:String(diarPer.length), sub: periodLabel },
       { label:'Total em diárias', value: brMoney(diarPer.reduce((s,l)=>s+(l.valor||0),0)), sub: periodLabel },
+      { label:'A pagar', value: brMoney(diarPer.filter(l=>!lancPago(l)).reduce((s,l)=>s+(l.valor||0),0)),
+        sub: diarPer.filter(l=>!lancPago(l)).length + ' diária(s) pendente(s)', color: diarPer.some(l=>!lancPago(l)) ? this.AMBER : this.GREEN },
       { label:'Diaristas', value:String(new Set(diarPer.map(l=>l.diarista).filter(Boolean)).size), sub:'pessoas diferentes' }
     ];
-    const diaristaNomes = [...new Set(this.state.lancamentos.filter(l=>l.categoria==='Diária' && l.diarista).map(l=>l.diarista))].map(v=>({ v }));
+    const diaristaNomes = [...new Set<string>(this.state.lancamentos.filter(l=>l.categoria==='Diária' && l.diarista).map(l=>l.diarista))].map(v=>({ v }));
     const fv = this.state.funcView || 'equipe';
     const lancTotal = lancPeriodo.reduce((s,l)=>s+(l.valor||0),0);
     const receitaBruta = receitaFat; // vem dos pedidos entregues no período
     const custoTotal = compraMercadoria + lancTotal;
     const lucroLiquido = receitaBruta - custoTotal;
     const pctLucro = receitaBruta ? lucroLiquido/receitaBruta*100 : 0;
-    // saldo em caixa (todas as épocas): vendas pagas − compras pagas − lançamentos
-    const cashAll = pedidosRaw.filter(p=>p.pag==='Pago').reduce((s,p)=>s+(p.valor||0),0)
-      - entradasRaw.filter(e=>e.pago==='Pago').reduce((s,e)=>s+(e.valor||0),0)
-      - lancRaw.reduce((s,l)=>s+(l.valor||0),0);
+    // saldo em caixa (todas as épocas): vendas pagas − compras pagas − lançamentos pagos
+    const cashAll = movs.reduce((s,m)=>s+m.ent-m.sai,0);
     // preço médio por produto: compra das entradas, venda das saídas
     const compraByProd = {}, vendaByProd = {};
     entradasRaw.forEach(en => (en.itens||[]).forEach(it => { const k=String(it.produtoId||it.nome); if(!compraByProd[k])compraByProd[k]={q:0,t:0}; compraByProd[k].q+=(+it.kg||0); compraByProd[k].t+=(+it.kg||0)*(+it.preco||0); }));
@@ -820,38 +887,41 @@ export class CrmApp extends Component<Record<string, never>, any> {
     entradasRaw.forEach(en => (en.itens||[]).forEach(it => { qEnt+=(+it.kg||0); qPer+=(+it.perdaKg||0); }));
     pedidosRaw.filter(p=>p.status!=='Cancelado'&&p.status!=='Devolvido').forEach(p => (p.itens||[]).forEach(it => { qSai+=(+it.kg||0); }));
     const cicloEst = qSai>0 ? Math.max(1, Math.round(Math.max(0,qEnt-qPer-qSai)/(qSai/30))) : 4;
-    const cicloPag = 3; // prazo de pagamento ao produtor (referência do estudo)
+    // prazo real de pagamento ao produtor: média de dias entre a coleta e o pagamento
+    const prazosForn = entradasRaw.filter(e=>e.pago==='Pago' && e.dataPag).map(e=>this._daysBetween(e.data, e.dataPag)).filter(d=>d!=null);
+    const cicloPag = prazosForn.length ? Math.round(avg(prazosForn)) : 3;
     const cicloDias = cicloEst + cicloReceb - cicloPag;
-    const cicloColor = cicloDias<=13 ? this.GREEN : (cicloDias<=16 ? this.AMBER : this.RED);
+    const cicloColor = cicloDias<=M.cicloMaxDias ? this.GREEN : (cicloDias<=M.cicloAlertaDias ? this.AMBER : this.RED);
     const cicloSum = cicloPag + cicloEst + cicloReceb || 1;
 
     // ---- dashboard ----
     const statCards = [
       { label:'Receita bruta', value:'R$ '+fmtBR(receitaBruta), delta:entregues.length+' pedido(s) entregue(s) · '+periodLabel, deltaColor:this.GREEN },
       { label:'Lucro líquido op.', value:'R$ '+fmtBR(lucroLiquido), delta:pctLucro.toFixed(1).replace('.',',')+'% s/ receita', deltaColor: lucroLiquido>0?this.GREEN:this.RED },
-      { label:'Ciclo de caixa', value:cicloDias+(cicloDias===1?' dia':' dias'), delta:'meta ≤ 13 dias', deltaColor: cicloColor },
-      { label:'Minimercados ativos', value:String(nAtivos), delta:(nAtivos-20>=0?'+'+(nAtivos-20):String(nAtivos-20))+' vs. equilíbrio (20)', deltaColor: nAtivos>=20?this.GREEN:this.RED }
+      { label:'Ciclo de caixa', value:cicloDias+(cicloDias===1?' dia':' dias'), delta:'meta ≤ '+M.cicloMaxDias+' dias', deltaColor: cicloColor },
+      { label:'Minimercados ativos', value:String(nAtivos), delta:(nAtivos-M.minimercadosEquilibrio>=0?'+':'')+(nAtivos-M.minimercadosEquilibrio)+' vs. equilíbrio ('+M.minimercadosEquilibrio+')', deltaColor: nAtivos>=M.minimercadosEquilibrio?this.GREEN:this.RED }
     ];
+    const pctMeta = (v, meta) => Math.min(100, meta ? Math.round(v/meta*100) : 0)+'%';
     const kpis = [
-      { label:'Índice de perdas (%)', real:fmtPct1(perdaMedia), meta:'≤ 10%', pct:Math.min(100,Math.round(perdaMedia/10*100))+'%', color: perdaMedia<=10?this.GREEN:(perdaMedia<=13?this.AMBER:this.RED), tag: perdaMedia<=10?'na meta':'fora' },
-      { label:'Markup médio (venda/compra)', real:Math.round(markupMedio)+'%', meta:'≥ 60%', pct:Math.min(100,Math.round(markupMedio/60*100))+'%', color: markupMedio>=60?this.GREEN:this.RED, tag: markupMedio>=60?'na meta':'fora' },
-      { label:'Nº de minimercados ativos', real:String(nAtivos), meta:'~35', pct:Math.min(100,Math.round(nAtivos/35*100))+'%', color: nAtivos>=35?this.GREEN:(nAtivos>=25?this.AMBER:this.RED), tag:(nAtivos-35>=0?'+':'')+(nAtivos-35) },
-      { label:'Ticket médio / minimercado', real:'R$ '+Math.round(ticketMesReal).toLocaleString('pt-BR'), meta:'3,5–3,8k', pct:Math.min(100,Math.round(ticketMesReal/3800*100))+'%', color: ticketMesReal>=3500?this.GREEN:(ticketMesReal>=3000?this.AMBER:this.RED), tag: ticketMesReal>=3500?'na meta':'quase' },
-      { label:'Ticket médio por entrega', real:'R$ '+Math.round(ticketEntregaReal).toLocaleString('pt-BR'), meta:'≥ R$ 430', pct:Math.min(100,Math.round(ticketEntregaReal/430*100))+'%', color: ticketEntregaReal>=430?this.GREEN:(ticketEntregaReal>=150?this.AMBER:this.RED), tag:(ticketEntregaReal>=430?'na meta':'-R$'+Math.round(430-ticketEntregaReal)) },
-      { label:'Inadimplência por cliente', real:fmtPct1(inadMedia), meta:'≤ 1%', pct:Math.min(100,Math.round(inadMedia*100))+'%', color: inadMedia<=1?this.GREEN:(inadMedia<=2?this.AMBER:this.RED), tag: inadMedia<=1?'na meta':'fora' },
-      { label:'Giro de estoque (dias)', real:cicloEst.toString().replace('.',','), meta:'≤ 4 d', pct:Math.min(100,Math.round(cicloEst/4*100))+'%', color: cicloEst<=4?this.GREEN:this.AMBER, tag: cicloEst<=4?'na meta':'+'+(cicloEst-4)+'d' },
-      { label:'Ciclo de caixa (dias)', real:String(cicloDias), meta:'≤ 13 d', pct:Math.min(100,Math.round(cicloDias/13*100))+'%', color: cicloColor, tag: cicloDias<=13?'na meta':'+'+(cicloDias-13)+'d' }
+      { label:'Índice de perdas (%)', real:fmtPct1(perdaMedia), meta:'≤ '+M.perdaMax+'%', pct:pctMeta(perdaMedia, M.perdaMax), color: perdaMedia<=M.perdaMax?this.GREEN:(perdaMedia<=M.perdaAlerta?this.AMBER:this.RED), tag: perdaMedia<=M.perdaMax?'na meta':'fora' },
+      { label:'Markup médio (venda/compra)', real:Math.round(markupMedio)+'%', meta:'≥ '+M.markupMin+'%', pct:pctMeta(markupMedio, M.markupMin), color: markupMedio>=M.markupMin?this.GREEN:this.RED, tag: markupMedio>=M.markupMin?'na meta':'fora' },
+      { label:'Nº de minimercados ativos', real:String(nAtivos), meta:'~'+M.minimercadosMeta, pct:pctMeta(nAtivos, M.minimercadosMeta), color: nAtivos>=M.minimercadosMeta?this.GREEN:(nAtivos>=M.minimercadosAlerta?this.AMBER:this.RED), tag:(nAtivos-M.minimercadosMeta>=0?'+':'')+(nAtivos-M.minimercadosMeta) },
+      { label:'Ticket médio / minimercado', real:'R$ '+Math.round(ticketMesReal).toLocaleString('pt-BR'), meta:(M.ticketMesMin/1000).toLocaleString('pt-BR')+'–'+(M.ticketMesMax/1000).toLocaleString('pt-BR')+'k', pct:pctMeta(ticketMesReal, M.ticketMesMax), color: ticketMesReal>=M.ticketMesMin?this.GREEN:(ticketMesReal>=M.ticketMesAlerta?this.AMBER:this.RED), tag: ticketMesReal>=M.ticketMesMin?'na meta':'quase' },
+      { label:'Ticket médio por entrega', real:'R$ '+Math.round(ticketEntregaReal).toLocaleString('pt-BR'), meta:'≥ R$ '+M.ticketEntregaMin.toLocaleString('pt-BR'), pct:pctMeta(ticketEntregaReal, M.ticketEntregaMin), color: ticketEntregaReal>=M.ticketEntregaMin?this.GREEN:(ticketEntregaReal>=M.ticketEntregaRisco?this.AMBER:this.RED), tag:(ticketEntregaReal>=M.ticketEntregaMin?'na meta':'-R$'+Math.round(M.ticketEntregaMin-ticketEntregaReal)) },
+      { label:'Inadimplência por cliente', real:fmtPct1(inadMedia), meta:'≤ '+M.inadMax+'%', pct:pctMeta(inadMedia, M.inadMax), color: inadMedia<=M.inadMax?this.GREEN:(inadMedia<=M.inadAlerta?this.AMBER:this.RED), tag: inadMedia<=M.inadMax?'na meta':'fora' },
+      { label:'Giro de estoque (dias)', real:cicloEst.toString().replace('.',','), meta:'≤ '+M.giroMaxDias+' d', pct:pctMeta(cicloEst, M.giroMaxDias), color: cicloEst<=M.giroMaxDias?this.GREEN:this.AMBER, tag: cicloEst<=M.giroMaxDias?'na meta':'+'+(cicloEst-M.giroMaxDias)+'d' },
+      { label:'Ciclo de caixa (dias)', real:String(cicloDias), meta:'≤ '+M.cicloMaxDias+' d', pct:pctMeta(cicloDias, M.cicloMaxDias), color: cicloColor, tag: cicloDias<=M.cicloMaxDias?'na meta':'+'+(cicloDias-M.cicloMaxDias)+'d' }
     ];
     const cartArr = Object.keys(fatByClient).map(nome => ({ nome, fat:fatByClient[nome] })).filter(x=>x.fat>0).sort((a,b)=>b.fat-a.fat);
     const cartDen = receitaFat || 1;
     const cartTop = cartArr.slice(0,5);
     const cartRest = cartArr.slice(5).reduce((s,x)=>s+x.fat,0);
     const cartMax = cartTop.length ? cartTop[0].fat/cartDen*100 : 1;
-    const carteira = cartTop.map(x => { const sh = x.fat/cartDen*100; return { nome:x.nome, pct:Math.round(sh)+'%', bar:(cartMax?Math.round(sh/cartMax*100):0)+'%', color: sh>15?this.RED:'#1d7a3e' }; });
+    const carteira = cartTop.map(x => { const sh = x.fat/cartDen*100; return { nome:x.nome, pct:Math.round(sh)+'%', bar:(cartMax?Math.round(sh/cartMax*100):0)+'%', color: sh>M.concentracaoMax?this.RED:'#1d7a3e' }; });
     if (cartRest > 0) carteira.push({ nome:'Demais '+(cartArr.length-5)+' clientes', pct:Math.round(cartRest/cartDen*100)+'%', bar:'100%', color:'#c3cdbf' });
     const top5Txt = 'Top 5 = ' + Math.round(cartTop.reduce((s,x)=>s+x.fat,0)/cartDen*100) + '% do faturamento';
     const cenBase = Math.max(lucroLiquido, 1);
-    const cenPess = Math.round(cenBase*0.55), cenOtim = Math.round(cenBase*1.5);
+    const cenPess = Math.round(cenBase*M.cenarioPessimista), cenOtim = Math.round(cenBase*M.cenarioOtimista);
     const cenScale = Math.max(cenOtim, lucroLiquido, 1);
     const cenarios = [
       { nome:'Pessimista', valor:'R$ '+fmtBR(cenPess), bar:Math.round(cenPess/cenScale*100)+'%', color:'#d8c9a8', txtColor:'#66756a', weight:500 },
@@ -886,10 +956,10 @@ export class CrmApp extends Component<Record<string, never>, any> {
         receb: !isAdmin? '—' : ((p.status==='Entregue' && p.recebDias>0) ? p.recebDias+' d' : '—'),
         recebColor: !isAdmin? '#6b7a6f' : (p.pag==='Pago'?this.GREEN:(p.pag==='Atrasado'?this.RED:'#6b7a6f')),
         perda:pct.toFixed(1).replace('.',',')+'%',
-        perdaColor: pct<=10?this.GREEN:(pct<=15?this.AMBER:this.RED),
+        perdaColor: pct<=M.perdaMax?this.GREEN:(pct<=M.perdaAlerta?this.AMBER:this.RED),
         statusColor:this.pStatusColor(p.status), statusBg:this.pStatusBg(p.status),
         pagColor: isAdmin? this.pPagColor(p.pag) : '#6b7a6f', pagBg: isAdmin? this.pPagBg(p.pag) : '#f0f3ed',
-        canMarkPago: isAdmin && p.pag!=='Pago' && p.status!=='Cancelado',
+        canMarkPago: isAdmin && (p.pag==='Pendente' || p.pag==='Atrasado'),
         isPago: isAdmin && p.pag==='Pago',
         pagInfo: p.pag==='Pago' && p.dataPag ? (p.formaPag||'')+' · '+p.dataPag : '',
         markPago:(e)=>this.openPagamento(p.id, e),
@@ -918,7 +988,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const fornecedores = this.state.fornecedores.map(f => {
       const v = variaOf(f);
       const vTxt = v==null ? '—' : (v>0?'+':'')+v.toFixed(1).replace('.',',')+'%';
-      const vColor = v==null ? '#6b7a6f' : (Math.abs(v)>=7?this.RED:(Math.abs(v)>=4?this.AMBER:this.GREEN));
+      const vColor = v==null ? '#6b7a6f' : (Math.abs(v)>=M.variacaoRisco?this.RED:(Math.abs(v)>=M.variacaoAlerta?this.AMBER:this.GREEN));
       const a = avgCompraByForn[f.nome];
       const precoReal = a && a.kg>0 ? a.tot/a.kg : 0;
       // última coleta e aproveitamento das entradas
@@ -934,7 +1004,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
         edit:()=>this.editFornecedor(f.id) };
     });
     const fornSummary = {
-      varia:{ v: variasComDados.length ? (variaMedia>0?'+':'')+variaMedia.toFixed(1).replace('.',',')+'%' : '—', color: Math.abs(variaMedia)>=7?this.RED:this.AMBER, sub:'última compra vs. anterior · ±7% CEASA' }
+      varia:{ v: variasComDados.length ? (variaMedia>0?'+':'')+variaMedia.toFixed(1).replace('.',',')+'%' : '—', color: Math.abs(variaMedia)>=M.variacaoRisco?this.RED:this.AMBER, sub:'última compra vs. anterior · ±'+M.variacaoRisco+'% CEASA' }
     };
 
     // ---- produtos ----
@@ -954,7 +1024,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
     Object.keys(lossByProd).forEach(k => { totProdKg += lossByProd[k].kg; totProdPerda += lossByProd[k].perdaKg; });
     const produtoPerdaMedia = totProdKg ? (totProdPerda/totProdKg*100) : null;
     const produtoPerdaMediaTxt = produtoPerdaMedia==null ? 'sem dados' : produtoPerdaMedia.toFixed(1).replace('.',',')+'%';
-    const produtoPerdaMediaColor = produtoPerdaMedia==null ? '#6b7a6f' : (produtoPerdaMedia<=10?this.GREEN:(produtoPerdaMedia<=15?this.AMBER:this.RED));
+    const produtoPerdaMediaColor = produtoPerdaMedia==null ? '#6b7a6f' : (produtoPerdaMedia<=M.perdaMax?this.GREEN:(produtoPerdaMedia<=M.perdaAlerta?this.AMBER:this.RED));
     const produtos = this.state.produtos.map(p => {
       const cb = compraByProd[String(p.id)]||compraByProd[p.nome], vb = vendaByProd[String(p.id)]||vendaByProd[p.nome];
       const cm = cb&&cb.q? cb.t/cb.q : (p.compra||0), vm = vb&&vb.q? vb.t/vb.q : (p.venda||0);
@@ -966,9 +1036,9 @@ export class CrmApp extends Component<Record<string, never>, any> {
         compra: cm>0? 'R$ '+cm.toFixed(2).replace('.',',') : '—',
         venda: vm>0? 'R$ '+vm.toFixed(2).replace('.',',') : '—',
         margem: (cm>0&&vm>0)? ('R$ '+mgR.toFixed(2).replace('.',',')+' · '+Math.round(mgP)+'%') : '—',
-        markup: mk==null? '—' : Math.round(mk)+'%', markupColor: mk==null? '#6b7a6f' : (mk>=60?this.GREEN:this.RED),
+        markup: mk==null? '—' : Math.round(mk)+'%', markupColor: mk==null? '#6b7a6f' : (mk>=M.markupMin?this.GREEN:this.RED),
         perda: rpct==null ? '—' : rpct.toFixed(1).replace('.',',')+'%',
-        perdaColor: rpct==null ? '#6b7a6f' : (rpct<=10?this.GREEN:(rpct<=15?this.AMBER:this.RED)),
+        perdaColor: rpct==null ? '#6b7a6f' : (rpct<=M.perdaMax?this.GREEN:(rpct<=M.perdaAlerta?this.AMBER:this.RED)),
         edit:()=>this.editProduto(p.id) };
     });
 
@@ -984,7 +1054,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
       { label:'Coletas no período', value:String(entradasPeriodo.length), sub:periodLabel, color:'#66756a' },
       { label:'Comprado (total)', value:'R$ '+fmtBR(compraMercadoria), sub:entPagas.length+' pagas', color:this.GREEN },
       { label:'A pagar ao produtor', value:'R$ '+fmtBR(entAPagar), sub:(entradasPeriodo.length-entPagas.length)+' pendente(s)', color: entAPagar>0?this.RED:this.GREEN },
-      { label:'Perda média', value:fmtPct1(perdaMedia), sub:'meta ≤ 10%', color: perdaMedia<=10?this.GREEN:(perdaMedia<=15?this.AMBER:this.RED) }
+      { label:'Perda média', value:fmtPct1(perdaMedia), sub:'meta ≤ '+M.perdaMax+'%', color: perdaMedia<=M.perdaMax?this.GREEN:(perdaMedia<=M.perdaAlerta?this.AMBER:this.RED) }
     ];
     const entradasRows = entradasPeriodo.map(en => {
       const ppct = en.pesoKg ? (en.perdaKg||0)/en.pesoKg*100 : 0;
@@ -992,7 +1062,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
         id:en.id, fornecedor:en.fornecedor, data:this._fmtDate(en.data),
         peso:(en.pesoKg||0).toLocaleString('pt-BR'), valor:'R$ '+(en.valor||0).toLocaleString('pt-BR'),
         perda: en.pesoKg ? ppct.toFixed(1).replace('.',',')+'%' : '—',
-        perdaColor: ppct<=10?this.GREEN:(ppct<=15?this.AMBER:this.RED),
+        perdaColor: ppct<=M.perdaMax?this.GREEN:(ppct<=M.perdaAlerta?this.AMBER:this.RED),
         motivo: en.motivo && en.motivo!=='—' ? en.motivo : '',
         pagInfo: en.pago==='Pago' && (en.formaPag||en.dataPag) ? (en.formaPag||'')+' · '+(en.dataPag?this._fmtDate(en.dataPag):'') : '',
         pago:en.pago, pagoColor: en.pago==='Pago'?this.GREEN:this.AMBER, pagoBg: en.pago==='Pago'?this.GBG:this.ABG,
@@ -1015,7 +1085,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const estoqueRaw = Object.keys(stockMap).map(k => { const o=stockMap[k]; return { ...o, saldoN:o.entrou-o.perda-o.saiu }; }).sort((a,b)=>String(a.nome).localeCompare(String(b.nome)));
     const estoqueRows = estoqueRaw.map(o => ({ nome:o.nome, un:o.un, entrou:fmtQ(o.entrou), perda:fmtQ(o.perda), saiu:fmtQ(o.saiu), saldo:fmtQ(o.saldoN), saldoColor: o.saldoN<0?this.RED:(o.saldoN===0?'#6b7a6f':'#0f2a18') }));
     const noEstoque = estoqueRows.length===0;
-    const perdasDepPeriodo = (periodo==='all' ? (this.state.perdas||[]) : (this.state.perdas||[]).filter(p=>this.monthOf(p.data)===periodo));
+    const perdasDepPeriodo = (periodo==='all' ? (this.state.perdas||[]) : (this.state.perdas||[]).filter(p=>this.anoMes(p.data)===periodo));
     const perdasRows = perdasDepPeriodo.slice().sort((a,b)=>String(b.data||'').localeCompare(String(a.data||''))).map(pe => ({
       data:this._fmtDate(pe.data), nome:pe.nome||prodNameById[String(pe.produtoId)]||'—', un:pe.un||'KG',
       qtd:fmtQ(pe.qtd), motivo:pe.motivo||'—', obs:pe.obs||'—', edit:()=>this.editPerda(pe.id)
@@ -1029,8 +1099,10 @@ export class CrmApp extends Component<Record<string, never>, any> {
 
     // ---- funcionários ----
     const funcs = this.state.funcionarios;
+    const mesFolha = periodo==='all' ? this._hojeIso().slice(0,7) : periodo;
+    const mesFolhaLbl = this.MESES[+mesFolha.slice(5,7)-1]+' '+mesFolha.slice(0,4);
     const adiantByFunc = {}, salByFunc = {};
-    lancPeriodo.forEach(l => { const k=String(l.funcionarioId||''); if(!k)return; if(l.categoria==='Adiantamento de salário') adiantByFunc[k]=(adiantByFunc[k]||0)+(l.valor||0); if(l.categoria==='Salário') salByFunc[k]=(salByFunc[k]||0)+(l.valor||0); });
+    lancRaw.filter(l=>this.anoMes(l.data)===mesFolha).forEach(l => { const k=String(l.funcionarioId||''); if(!k)return; if(l.categoria==='Adiantamento de salário') adiantByFunc[k]=(adiantByFunc[k]||0)+(l.valor||0); if(l.categoria==='Salário') salByFunc[k]=(salByFunc[k]||0)+(l.valor||0); });
     const funcionariosRows = funcs.map(f => {
       const ad = adiantByFunc[String(f.id)]||0, sp = salByFunc[String(f.id)]||0;
       const aPagar = Math.max(0,(f.salario||0)-ad-sp);
@@ -1074,8 +1146,8 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const funcStats = [
       { label:'Funcionários', value:String(funcs.length), sub:'cadastrados' },
       { label:'Folha mensal', value:'R$ '+fmtBR(folhaTotal), sub:'soma dos salários' },
-      { label:'Adiantado no período', value:'R$ '+fmtBR(adiantTotal), sub:periodLabel },
-      { label:'A pagar', value:'R$ '+fmtBR(Math.max(0,folhaTotal-adiantTotal-salPagoTotal)), sub:'salários − adiantado − pago' }
+      { label:'Adiantado no mês', value:'R$ '+fmtBR(adiantTotal), sub:mesFolhaLbl },
+      { label:'A pagar no mês', value:'R$ '+fmtBR(Math.max(0,folhaTotal-adiantTotal-salPagoTotal)), sub:'salários − adiantado − pago · '+mesFolhaLbl }
     ];
 
     // ---- lançamentos (lista + relatório/ledger) ----
@@ -1087,9 +1159,8 @@ export class CrmApp extends Component<Record<string, never>, any> {
     }));
     const noLanc = lancRows.length===0;
     const ledger = [];
-    pedidosPeriodo.filter(p=>p.pag==='Pago').forEach(p => ledger.push({ d:p.dataPagIso||p.entrega, tipo:'Entrada', origem:'Venda '+p.id+' — '+p.cliente, ent:p.valor||0, sai:0 }));
-    entradasPeriodo.filter(en=>en.pago==='Pago').forEach(en => ledger.push({ d:en.dataPag||en.data, tipo:'Saída', origem:'Compra '+en.id+' — '+en.fornecedor, ent:0, sai:en.valor||0 }));
-    lancPeriodo.forEach(l => ledger.push({ d:l.data, tipo:'Saída', origem:l.categoria+(l.descricao?' — '+l.descricao:''), ent:0, sai:l.valor||0 }));
+    // fluxo de caixa do período (pela data do recebimento/pagamento), com a conta usada
+    movsPeriodo.forEach(m => ledger.push({ d:m.d, tipo: m.ent>0 ? 'Entrada' : 'Saída', origem:m.origem+' · '+nomeConta(m.conta), ent:m.ent, sai:m.sai }));
     ledger.sort((a,b)=>String(b.d||'').localeCompare(String(a.d||'')));
     const relLancRows = ledger.map(x => ({ data:this._fmtDate(x.d), origem:x.origem, tipo:x.tipo,
       tipoColor: x.ent>0?this.GREEN:this.RED, tipoBg: x.ent>0?this.GBG:this.RBG,
@@ -1112,14 +1183,14 @@ export class CrmApp extends Component<Record<string, never>, any> {
       return { nome:cc.nome, rota:cc.rota, status:st.l, pedidos:ent, fat,
         fatTxt:'R$ '+fat.toLocaleString('pt-BR'), teTxt: te? 'R$ '+te.toLocaleString('pt-BR') : '—',
         part:(receitaFat?Math.round(fat/receitaFat*100):0)+'%',
-        inad:ccIn.toFixed(1).replace('.',',')+'%', inadColor: ccIn<=1?this.GREEN:(ccIn<=2?this.AMBER:this.RED),
+        inad:ccIn.toFixed(1).replace('.',',')+'%', inadColor: ccIn<=M.inadMax?this.GREEN:(ccIn<=M.inadAlerta?this.AMBER:this.RED),
         healthColor:hm.c, healthBg:hm.bg, healthLabel:hm.l };
     }).sort((a,b)=>b.fat-a.fat);
     const relClientesTot = [
       { label:'Clientes ativos', value:String(ativos.length), sub:clientesRaw.length+' no total' },
       { label:'Faturamento do período', value:'R$ '+fmtBR(receitaFat), sub:periodLabel },
-      { label:'Ticket médio/cliente', value:'R$ '+fmtBR(ticketMesReal), sub:'meta 3,5–3,8k' },
-      { label:'Inadimplência média', value:fmtPct1(inadMedia), sub:'meta ≤ 1%' }
+      { label:'Ticket médio/cliente', value:'R$ '+fmtBR(ticketMesReal), sub:'meta R$ '+M.ticketMesMin.toLocaleString('pt-BR')+'–'+M.ticketMesMax.toLocaleString('pt-BR') },
+      { label:'Inadimplência média', value:fmtPct1(inadMedia), sub:'meta ≤ '+M.inadMax+'%' }
     ];
     const statusList = ['Entregue','Em rota','Pendente','Devolvido','Cancelado'];
     const relStatus = statusList.map(s => { const arr = pedidosPeriodo.filter(p=>p.status===s); return { label:s, count:arr.length, valor:'R$ '+fmtBR(arr.reduce((x,p)=>x+(p.valor||0),0)), color:this.pStatusColor(s), bg:this.pStatusBg(s) }; }).filter(x=>x.count>0);
@@ -1140,7 +1211,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
       const pp = o.qtd ? o.perda/o.qtd*100 : 0;
       return { forn:k, coletas:o.coletas, qtd:o.qtd.toLocaleString('pt-BR'),
         valor:'R$ '+fmtBR(o.valor), medio: o.qtd? 'R$ '+(o.valor/o.qtd).toFixed(2).replace('.',',') : '—',
-        perda:pp.toFixed(1).replace('.',',')+'%', perdaColor: pp<=10?this.GREEN:(pp<=15?this.AMBER:this.RED),
+        perda:pp.toFixed(1).replace('.',',')+'%', perdaColor: pp<=M.perdaMax?this.GREEN:(pp<=M.perdaAlerta?this.AMBER:this.RED),
         aproveit:(100-pp).toFixed(0)+'%',
         aPagar: o.aPagar? 'R$ '+fmtBR(o.aPagar) : '—', aPagarColor: o.aPagar? this.RED : '#6b7a6f',
         _raw:o };
@@ -1173,9 +1244,9 @@ export class CrmApp extends Component<Record<string, never>, any> {
       const pp = o.compQ ? o.perda/o.compQ*100 : 0;
       return { nome:o.nome, compQ:o.compQ.toLocaleString('pt-BR'), vendQ:o.vendQ.toLocaleString('pt-BR'),
         fat:'R$ '+fmtBR(o.vendV), margem: o.vendQ? 'R$ '+fmtBR(margemR) : '—',
-        markup: mk==null? '—' : Math.round(mk)+'%', markupColor: mk==null? '#6b7a6f' : (mk>=60?this.GREEN:this.RED),
+        markup: mk==null? '—' : Math.round(mk)+'%', markupColor: mk==null? '#6b7a6f' : (mk>=M.markupMin?this.GREEN:this.RED),
         perda: o.compQ? pp.toFixed(1).replace('.',',')+'%' : '—',
-        perdaColor: pp<=10?this.GREEN:(pp<=15?this.AMBER:this.RED),
+        perdaColor: pp<=M.perdaMax?this.GREEN:(pp<=M.perdaAlerta?this.AMBER:this.RED),
         _fat:o.vendV, _margem:margemR, _perda:pp };
     }).sort((a,b)=>b._fat-a._fat);
     const noRelProdutos = relProdutos.length===0;
@@ -1219,7 +1290,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const relInadTot = [
       { label:'Total em atraso', value:'R$ '+fmtBR(inadTotVal), sub:atrasadosPeriodo.length+' pedido(s) · '+periodLabel },
       { label:'Clientes inadimplentes', value:String(relInad.length), sub:clientesRaw.length+' na carteira' },
-      { label:'% da receita', value:(receitaFat?(inadTotVal/receitaFat*100):0).toFixed(1).replace('.',',')+'%', sub:'meta ≤ 1%' },
+      { label:'% da receita', value:(receitaFat?(inadTotVal/receitaFat*100):0).toFixed(1).replace('.',',')+'%', sub:'meta ≤ '+M.inadMax+'%' },
       { label:'Maior devedor', value: relInad[0]? relInad[0].cliente : '—', sub: relInad[0]? relInad[0].valor : 'nenhum atraso' }
     ];
 
@@ -1239,7 +1310,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const maiorMot = relPerdaMotivos[0];
     const relPerdasTot = [
       { label:'Perda total', value:perdaTotalQtd.toLocaleString('pt-BR'), sub:'somando coleta e depósito' },
-      { label:'Índice de perdas', value:fmtPct1(perdaMedia), sub:'meta ≤ 10%' },
+      { label:'Índice de perdas', value:fmtPct1(perdaMedia), sub:'meta ≤ '+M.perdaMax+'%' },
       { label:'Principal motivo', value: maiorMot? maiorMot.motivo : '—', sub: maiorMot? (maiorMot.pct+' do total') : periodLabel },
       { label:'Perdas no depósito', value:String(perdasDep.length), sub:'lançamentos avulsos' }
     ];
@@ -1302,12 +1373,59 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const csvAtivo = csvDefs[RV] || csvDefs.clientes;
     this._csv = { nome:(relNomes[RV]||'Relatorio')+sufixo, header:csvAtivo.header, rows:csvAtivo.rows };
 
+    // ---- contas a receber / a pagar: tudo em aberto, por vencimento (não depende do período) ----
+    const hojeC = this._hojeIso();
+    const diasPara = venc => (venc && venc !== '—') ? Math.round((this._parseDate(venc) - this._parseDate(hojeC))/86400000) : null;
+    const prazoTxt = d => d==null ? 'sem vencimento' : (d<0 ? 'venceu há '+(-d)+'d' : (d===0 ? 'vence hoje' : 'vence em '+d+'d'));
+    const prazoCor = d => d==null ? '#6b7a6f' : (d<0 ? this.RED : (d<=3 ? this.AMBER : '#435349'));
+    const contasReceber = pedidosRaw.filter(p=>p.pag==='Pendente'||p.pag==='Atrasado').map(p => {
+      const d = diasPara(p.venc);
+      return { _v: p.venc && p.venc!=='—' ? p.venc : '9999', _d:d, _valor:p.valor||0, doc:p.id, nome:p.cliente,
+        detalhe:'entrega '+this._fmtDate(p.entrega)+' · '+p.status, venc: p.venc && p.venc!=='—' ? this._fmtDate(p.venc) : '—',
+        prazo:prazoTxt(d), prazoColor:prazoCor(d), valor:brMoney(p.valor), acao:'Receber', baixar: ev => this.openPagamento(p.id, ev) };
+    }).sort((a,b)=>String(a._v).localeCompare(String(b._v)));
+    const contasPagar = entradasRaw.filter(e=>e.pago!=='Pago').map(e => {
+      const v = e.venc || e.data, d = diasPara(v);
+      return { _v:v, _d:d, _valor:e.valor||0, doc:e.id, nome:e.fornecedor, detalhe:'compra · coleta '+this._fmtDate(e.data),
+        venc:this._fmtDate(v), prazo:prazoTxt(d), prazoColor:prazoCor(d), valor:brMoney(e.valor), acao:'Pagar', baixar: ev => this.openPagarEntrada(e.id, ev) };
+    }).concat(lancRaw.filter(l=>!lancPago(l)).map(l => {
+      const d = diasPara(l.data);
+      return { _v:l.data, _d:d, _valor:l.valor||0, doc:l.categoria, nome:l.diarista || l.descricao || l.categoria,
+        detalhe: l.categoria==='Diária' ? (l.descricao||'diária') : (l.descricao||''), venc:this._fmtDate(l.data),
+        prazo:prazoTxt(d), prazoColor:prazoCor(d), valor:brMoney(l.valor), acao:'Pagar', baixar: ev => this.openPagarLanc(l.id, ev) };
+    })).sort((a,b)=>String(a._v).localeCompare(String(b._v)));
+    const somaV = l => l.reduce((t,x)=>t+x._valor,0);
+    const totReceber = somaV(contasReceber), totPagar = somaV(contasPagar);
+    const vencReceber = somaV(contasReceber.filter(x=>x._d!=null && x._d<0)), vencPagar = somaV(contasPagar.filter(x=>x._d!=null && x._d<0));
+    const saldoHoje = this.state.bancos.reduce((t,b)=>t+(+b.saldoInicial||0),0) + cashAll;
+    const projetado = saldoHoje + totReceber - totPagar;
+    const contasStats = [
+      { label:'A receber', value:brMoney(totReceber), sub:contasReceber.length+' venda(s) · '+brMoney(vencReceber)+' vencido', color: vencReceber>0?this.RED:this.GREEN },
+      { label:'A pagar', value:brMoney(totPagar), sub:contasPagar.length+' conta(s) · '+brMoney(vencPagar)+' vencido', color: vencPagar>0?this.RED:this.AMBER },
+      { label:'Saldo em caixa hoje', value:fmtSaldo(saldoHoje), sub:'bancos + caixa', color: saldoHoje<0?this.RED:'#0f2a18' },
+      { label:'Saldo projetado', value:fmtSaldo(projetado), sub:'hoje + a receber − a pagar', color: projetado<0?this.RED:'#17642f' }
+    ];
+
+    // ---- limite de crédito do cliente (aviso no formulário do pedido) ----
+    let alertaCredito = '';
+    if (this.state.modal === 'pedido' && this.state.draft) {
+      const dr = this.state.draft;
+      const cli = clientesRaw.find(x => x.nome === dr.cliente);
+      if (cli && (+cli.limite||0) > 0) {
+        const emAberto = pedidosRaw.filter(x => x.cliente===cli.nome && x.id!==dr.id && (x.pag==='Pendente'||x.pag==='Atrasado')).reduce((t,x)=>t+(x.valor||0),0);
+        const este = Math.round((dr.itens||[]).reduce((t,i)=>t+(+i.kg||0)*(+i.preco||0),0));
+        if (dr.pag !== 'Pago' && emAberto + este > cli.limite) {
+          alertaCredito = 'Limite de crédito de '+brMoney(cli.limite)+' excedido: '+cli.nome+' já deve '+brMoney(emAberto)+' e este pedido soma '+brMoney(este)+'.';
+        }
+      }
+    }
+
     return {
       isAdmin,
       logged: this.state.logged, semLogin: !this.state.logged,
-      loginRole: this.state.loginRole, loginPass: this.state.loginPass, loginErr: this.state.loginErr,
+      loginPass: this.state.loginPass, loginErr: this.state.loginErr,
       loginHasErr: !!this.state.loginErr,
-      setLoginRole:this.setLoginRole, setLoginPass:this.setLoginPass, doLogin:this.doLogin, loginOnKey:this.loginOnKey,
+      setLoginPass:this.setLoginPass, doLogin:this.doLogin, loginOnKey:this.loginOnKey,
       logout:this.logout,
       passosRows, guiaAberto, guiaTitulo, guiaSub, guiaProgresso: passosFeitos+' de 5',
       guiaBarra: Math.round(passosFeitos/5*100)+'%',
@@ -1332,6 +1450,17 @@ export class CrmApp extends Component<Record<string, never>, any> {
       navItems, screenTitle:titles[S][0], screenSub:titles[S][1],
       isDashboard:S==='dashboard', isPedidos:S==='pedidos', isFornecedores:S==='fornecedores',
       isProdutos:S==='produtos', isFinanceiro:S==='financeiro', isRelatorios:S==='relatorios', isEntradas:S==='entradas',
+      isConfiguracoes:S==='configuracoes', cfgTab: this.state.cfgTab || 'metas', cfgSetTab:this.cfgSetTab,
+      cfgDraft: this.state.cfgDraft || this._cfgCopia(), cfgAlterado: !!this.state.cfgDraft && JSON.stringify(this.state.cfgDraft) !== JSON.stringify(this._cfgCopia()),
+      updateMeta:this.updateMeta, updateRotas:this.updateRotas, updateEmpresa:this.updateEmpresa, salvarConfig:this.salvarConfig, descartarConfig:this.descartarConfig,
+      usuarios: (this.state.usuarios || []).map(u => ({ ...u, voce: !!this.state.user && this.state.user.id === u.id, edit: () => this.editUsuario(u.id) })),
+      newUsuario:this.newUsuario, auditoria: this.state.auditoria || [], histRecurso: this.state.histRecurso || '', setHistRecurso:this.setHistRecurso,
+      carregarHistorico:this.carregarHistorico, baixarBackup:this.baixarBackup, abrirSenha:this.abrirSenha,
+      modalUsuario: this.state.modal==='usuario', modalSenha: this.state.modal==='senha', usuarioNovo: !!this.state.draft && this.state.draft.id == null,
+      rotaOptions: this._rotas(), empresaNome: (this.state.config && this.state.config.empresa && this.state.config.empresa.nome) || CONFIG_PADRAO.empresa.nome,
+      isContas:S==='contas', contasStats, contasReceber, contasPagar, noReceber: contasReceber.length===0, noPagar: contasPagar.length===0,
+      alertaCredito,
+      modalBaixa: ['pagamento','pagarEntrada','pagarLanc'].includes(this.state.modal), baixaRecebimento: this.state.modal==='pagamento',
       isEstoque:S==='estoque', isFuncionarios:S==='funcionarios', isVeiculos:S==='veiculos', isBancos:S==='bancos',
       funcViewEquipe: fv==='equipe', funcViewDiarias: fv==='diarias',
       funcTabEquipe: () => this.setState({ funcView:'equipe' }), funcTabDiarias: () => this.setState({ funcView:'diarias' }),
@@ -1341,7 +1470,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
       caixaOpen: !!this.state.caixaOpen, caixaSeta: this.state.caixaOpen ? '▴' : '▾', caixaBorder: this.state.caixaOpen ? '#1d7a3e' : '#cfe3d3',
       toggleCaixa: () => this.setState(s => ({ caixaOpen: !s.caixaOpen })), closeCaixa: () => this.setState({ caixaOpen:false }),
       goBancos: () => this.setState({ caixaOpen:false, screen:'bancos', clienteView:'list' }),
-      bancoRows, newBanco:this.newBanco, modalBanco: this.state.modal==='banco', semBancoRow: true, semBancoQtd:String(semB.length), semBancoSaidas: brMoney(semB.reduce((s,l)=>s+(l.valor||0),0)),
+      bancoRows, newBanco:this.newBanco, modalBanco: this.state.modal==='banco', semBancoRow: true, semBancoQtd:String(caixaPer.n), semBancoSaidas: brMoney(caixaPer.sai), semBancoEntradas: brMoney(caixaPer.ent),
       bancoLista: this.BANCOS_BR.map(x=>({ v:x[1] })),
       bancoOptions: this.state.bancos.filter(b=>b.ativo!=='nao' || (this.state.draft && String(this.state.draft.bancoId)===String(b.id))).map(b=>({ id:String(b.id), nome:b.instituicao+(b.apelido?' · '+b.apelido:'') })),
       veicRows, veicStats, noVeic, newVeiculo:this.newVeiculo, modalVeiculo: this.state.modal==='veiculo',
@@ -1357,12 +1486,11 @@ export class CrmApp extends Component<Record<string, never>, any> {
       relLancRows, relLancTot, noRelLanc,
       ...(() => {
         const iniciais = this.state.bancos.reduce((s,b)=>s+(+b.saldoInicial||0),0);
-        const comBanco = this.state.lancamentos.filter(l=>l.bancoId && this.state.bancos.some(b=>String(b.id)===String(l.bancoId))).reduce((s,l)=>s+(l.valor||0),0);
-        const total = iniciais + cashAll, sem = cashAll + comBanco;
-        const f = v => (v<0?'−R$ ':'R$ ')+Number(Math.abs(v)).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+        const total = iniciais + cashAll, sem = caixaTot.ent - caixaTot.sai;
+        const f = fmtSaldo;
         return { saldoCaixa:f(total), saldoCaixaColor: total>=0?'#17642f':this.RED, semBancoSaldo:f(sem), semBancoSaldoColor: sem<0?'#b3283d':'#16241b',
           caixaBancos: bancoRows.map(b => ({ nome:b.nome, apelido:b.apelido, saldo:b.saldo, color:b.saldoColor, nomeColor:'#16241b' }))
-            .concat([{ nome:'Sem banco informado', apelido:'vendas, compras e custos sem banco', saldo:f(sem), color: sem<0?'#b3283d':'#16241b', nomeColor:'#5a6a5f' }]) };
+            .concat([{ nome:'Caixa (dinheiro)', apelido:'recebimentos e pagamentos sem banco', saldo:f(sem), color: sem<0?'#b3283d':'#16241b', nomeColor:'#5a6a5f' }]) };
       })(),
       entradaStats, entradasRows, newEntrada:this.newEntrada,
       finCompraTxt:'R$ '+fmtBR(compraMercadoria), entTotals,
@@ -1408,7 +1536,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
       cicloRecW: Math.round(cicloReceb/cicloSum*100)+'%',
       // modal
       modalOpen: !!this.state.modal,
-      modalWidth: (this.state.modal==='pedido'||this.state.modal==='entrada') ? '840px' : (this.state.modal==='pagamento' ? '460px' : ((this.state.modal==='lancamento'||this.state.modal==='funcionario'||this.state.modal==='perda'||this.state.modal==='veiculo'||this.state.modal==='banco'||this.state.modal==='diaria') ? '560px' : '700px')),
+      modalWidth: (this.state.modal==='pedido'||this.state.modal==='entrada') ? '840px' : ((this.state.modal==='pagamento'||this.state.modal==='pagarLanc'||this.state.modal==='pagarEntrada') ? '460px' : ((this.state.modal==='lancamento'||this.state.modal==='usuario'||this.state.modal==='senha'||this.state.modal==='funcionario'||this.state.modal==='perda'||this.state.modal==='veiculo'||this.state.modal==='interacao'||this.state.modal==='banco'||this.state.modal==='diaria') ? '560px' : '700px')),
       modalCliente: this.state.modal==='cliente', isEditingCliente: this.state.modal==='cliente' && this.state.isEditing,
       modalPedido: this.state.modal==='pedido',
       modalFornecedor: this.state.modal==='fornecedor',
@@ -1417,7 +1545,10 @@ export class CrmApp extends Component<Record<string, never>, any> {
       modalLancamento: this.state.modal==='lancamento',
       modalFuncionario: this.state.modal==='funcionario',
       modalPagamento: this.state.modal==='pagamento',
-      modalTitle: ({cliente:this.state.isEditing?'Editar cliente':'Novo cliente', pedido:this.state.isEditing?'Editar pedido':'Novo pedido', fornecedor:this.state.isEditing?'Editar fornecedor':'Novo fornecedor', produto:this.state.isEditing?'Editar produto':'Novo produto', entrada:this.state.isEditing?'Editar entrada':'Nova entrada (compra)', perda:this.state.isEditing?'Editar perda':'Registrar perda no depósito', lancamento:this.state.isEditing?'Editar lançamento':'Novo lançamento de custo', veiculo:this.state.isEditing?'Editar veículo':'Novo veículo', banco:this.state.isEditing?'Editar banco':'Novo banco', diaria:this.state.isEditing?'Editar diária':'Nova diária', funcionario:this.state.isEditing?'Editar funcionário':'Novo funcionário', pagamento:'Registrar pagamento '+(this.state.draft?this.state.draft.id:'')})[this.state.modal] || '',
+      modalPagarLanc: this.state.modal==='pagarLanc',
+      modalInteracao: this.state.modal==='interacao', tiposInteracao: this.TIPOS_INTERACAO, newInteracao: this.newInteracao,
+      semInteracoes: sel.interacoes.length===0,
+      modalTitle: ({cliente:this.state.isEditing?'Editar cliente':'Novo cliente', pedido:this.state.isEditing?'Editar pedido':'Novo pedido', fornecedor:this.state.isEditing?'Editar fornecedor':'Novo fornecedor', produto:this.state.isEditing?'Editar produto':'Novo produto', entrada:this.state.isEditing?'Editar entrada':'Nova entrada (compra)', perda:this.state.isEditing?'Editar perda':'Registrar perda no depósito', lancamento:this.state.isEditing?'Editar lançamento':'Novo lançamento de custo', veiculo:this.state.isEditing?'Editar veículo':'Novo veículo', banco:this.state.isEditing?'Editar banco':'Novo banco', diaria:this.state.isEditing?'Editar diária':'Nova diária', funcionario:this.state.isEditing?'Editar funcionário':'Novo funcionário', interacao:this.state.isEditing?'Editar interação':'Registrar interação', usuario:(this.state.draft && this.state.draft.id != null) ? 'Editar usuário' : 'Novo usuário', senha:'Minha senha', pagarLanc:'Pagar '+(this.state.draft && this.state.draft.rotulo || 'conta'), pagarEntrada:'Pagar compra '+(this.state.draft?this.state.draft.id:''), pagamento:'Receber venda '+(this.state.draft?this.state.draft.id:'')})[this.state.modal] || '',
       isEditing: !!this.state.isEditing,
       draft: this.state.draft || {},
       finReceitaRef: fmtBR(receitaFat)+' — soma dos pedidos entregues (não editável)',
@@ -1443,18 +1574,28 @@ export class CrmApp extends Component<Record<string, never>, any> {
       }),
       semProdutoParaVincular: this.state.produtos.length===0,
       qtdProdVinculados: (this.state.draft && this.state.draft.produtos) ? this.state.draft.produtos.length : 0,
-      itemRows, pedTotals, noItens, entTotals,
+      itemRows, pedTotals, noItens,
       addItem:this.addItem, updateItem:this.updateItem,
       newCliente:this.newCliente, editCurrentCliente:this.editCurrentCliente, deleteCurrentCliente:this.deleteCurrentCliente,
       newPedido:this.newPedido,
       newFornecedor:this.newFornecedor, newProduto:this.newProduto,
       updateDraft:this.updateDraft,
       saveDraft:this.saveDraft, closeModal:this.closeModal, deleteFromModal:this.deleteFromModal,
-      closeModalBackdrop:this.closeModalBackdrop, stopProp:this.stopProp
+      closeModalBackdrop:this.closeModalBackdrop, stopProp:this.stopProp,
+      loginUser: this.state.loginUser, setLoginUser: this.setLoginUser, loginBusy: !!this.state.loginBusy,
+      userNome: this.state.user ? this.state.user.nome : '',
+      podeTrocarPerfil: !!(this.state.user && this.state.user.role === 'admin'),
+      salvando: !!this.state.salvando
     };
   }
 
   render() {
-    return <AppView ui={this.renderVals()} />;
+    if (this.state.booting) return <Carregando />;
+    return (
+      <>
+        <AppView ui={this.renderVals()} />
+        {this.state.aviso ? <Aviso texto={this.state.aviso.texto} tipo={this.state.aviso.tipo} onClose={this.fecharAviso} /> : null}
+      </>
+    );
   }
 }

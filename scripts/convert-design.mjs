@@ -182,7 +182,7 @@ function textToJsx(t, scope, hasPrev, hasNext) {
   const lead = /^\s/.test(t) && hasPrev ? "{' '}" : '';
   const trail = /\s$/.test(t) && hasNext ? "{' '}" : '';
   let s = t.replace(/\s+/g, ' ').trim();
-  s = s.replace(/[{}]/g, (c) => `{'${c}'}`)
+  s = s.replace(/"/g, '&quot;').replace(/[{}]/g, (c) => `{'${c}'}`)
     .replace(/>/g, "{'>'}")
     .replace(/\{'\{'\}\{'\{'\}\s*([\w.]+)\s*\{'\}'\}\{'\}'\}/g, (_, e) => `{${resolve(e, scope)}}`);
   return lead + s + trail;
@@ -296,6 +296,15 @@ const rootBody = gen(tree.children, [], 3, 'AppView');
 files.push({ file: 'AppView', comp: 'AppView', body: rootBody });
 
 // ---------------------------------------------------------------- write
+// Arquivos que divergem do design de propósito — o script não os sobrescreve:
+//   Login (usuário/senha reais), Sidebar (troca de perfil só p/ admin), AppView (tela Contas),
+//   ClienteFicha + ModalShell (interações reais; baixa única de receber/pagar),
+//   Funcionarios + DiariaForm (diárias como contas a pagar),
+//   Bancos + PedidoForm + EntradaForm (financeiro vinculado: conta, vencimento, crédito),
+//   LancamentoForm (custo a pagar), FornecedorForm (prazo), ClienteForm (rotas das Configurações).
+const MANUAL = new Set(['AppView', 'Login', 'layout/Sidebar', 'screens/ClienteFicha', 'modals/ModalShell',
+  'screens/Funcionarios', 'modals/DiariaForm', 'screens/Bancos', 'modals/PedidoForm', 'modals/EntradaForm',
+  'modals/LancamentoForm', 'modals/FornecedorForm', 'modals/ClienteForm']);
 const HEADER = '// Gerado a partir do design (Imperio da Goiaba CRM v2.dc.html) por scripts/convert-design.mjs.\n';
 for (const f of files) {
   const used = new Set();
@@ -316,6 +325,10 @@ for (const f of files) {
     imports.join('\n') + (imports.length ? '\n' : '') +
     `\nexport function ${f.comp}({ ui }: { ui: Vals }) {\n  return (\n    <>\n${text}\n    </>\n  );\n}\n`;
   const out = path.join(outDir, f.file + '.tsx');
+  if (MANUAL.has(f.file) && fs.existsSync(out)) {
+    console.log(`mantido (editado à mão): ${f.file}.tsx — compare com o design se ele mudar`);
+    continue;
+  }
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, src);
 }

@@ -1,4 +1,4 @@
-// Gerado a partir do design (Imperio da Goiaba CRM v2.dc.html) por scripts/convert-design.mjs.
+// Baseado no design (Imperio da Goiaba CRM v2.dc.html) e mantido à mão: situação (a pagar / paga).
 'use client';
 
 import { Fragment } from 'react';
@@ -39,9 +39,28 @@ export function DiariaForm({ ui }: { ui: Vals }) {
           </label>
           <input data-field="descricao" value={ui.draft.descricao ?? ''} onChange={ui.updateDraft} placeholder="Ex.: descarga do caminhão da CEASA" style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }} />
         </div>
+        <div>
+          <label style={{ fontSize: "11.5px", fontWeight: "600", color: "#4f5e54", marginBottom: "5px", display: "block" }}>
+            Situação
+          </label>
+          <select data-field="pago" value={ui.draft.pago ?? 'Pendente'} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }}>
+            <option value="Pendente">A pagar</option>
+            <option value="Pago">Já paga</option>
+          </select>
+        </div>
+        <div>
+          {ui.draft.pago === 'Pago' ? (
+            <>
+              <label style={{ fontSize: "11.5px", fontWeight: "600", color: "#4f5e54", marginBottom: "5px", display: "block" }}>
+                Data do pagamento
+              </label>
+              <input type="date" data-field="dataPag" value={ui.draft.dataPag ?? ''} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }} />
+            </>
+          ) : null}
+        </div>
         <div style={{ gridColumn: "1/-1" }}>
           <label style={{ fontSize: "11.5px", fontWeight: "600", color: "#4f5e54", marginBottom: "5px", display: "block" }}>
-            Banco
+            Banco (de onde sai o pagamento)
           </label>
           <select data-field="bancoId" value={ui.draft.bancoId ?? ''} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }}>
             <option value="">
@@ -57,7 +76,8 @@ export function DiariaForm({ ui }: { ui: Vals }) {
           </select>
         </div>
         <div style={{ gridColumn: "1/-1", background: "#eef6ef", border: "1px solid #cfe3d3", borderRadius: "9px", padding: "10px 13px", fontSize: "12px", color: "#17642f", lineHeight: "1.5" }}>
-          A diária entra como custo no Financeiro (categoria Diária) e desconta do saldo do banco escolhido.
+          A diária entra como custo no Financeiro (categoria Diária) na data do serviço. Enquanto estiver{' '}
+          <strong>a pagar</strong>, não desconta do caixa nem do banco — isso acontece quando ela é paga.
         </div>
       </div>
     </>

@@ -1,4 +1,4 @@
-// Gerado a partir do design (Imperio da Goiaba CRM v2.dc.html) por scripts/convert-design.mjs.
+// Baseado no design (Imperio da Goiaba CRM v2.dc.html) e mantido à mão: situação (paga / a pagar) do custo.
 'use client';
 
 import { Fragment } from 'react';
@@ -95,6 +95,25 @@ export function LancamentoForm({ ui }: { ui: Vals }) {
             </div>
           </>
         ) : null}
+        <div>
+          <label style={{ fontSize: "11.5px", fontWeight: "600", color: "#4f5e54", marginBottom: "5px", display: "block" }}>
+            Situação
+          </label>
+          <select data-field="pago" value={ui.draft.pago ?? 'Pago'} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }}>
+            <option value="Pago">Paga</option>
+            <option value="Pendente">A pagar (vence na data acima)</option>
+          </select>
+        </div>
+        <div>
+          {(ui.draft.pago ?? 'Pago') === 'Pago' ? (
+            <>
+              <label style={{ fontSize: "11.5px", fontWeight: "600", color: "#4f5e54", marginBottom: "5px", display: "block" }}>
+                Data do pagamento
+              </label>
+              <input type="date" data-field="dataPag" value={ui.draft.dataPag ?? ''} onChange={ui.updateDraft} style={{ width: "100%", padding: "9px 11px", border: "1px solid #d3dbcf", borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", color: "#16241b", background: "#fff", boxSizing: "border-box" }} />
+            </>
+          ) : null}
+        </div>
         <div style={{ gridColumn: "1/-1", background: "#ffffff", borderRadius: "9px", padding: "10px 13px", fontSize: "12px", color: "#4f5e54", lineHeight: "1.5" }}>
           O lançamento entra no{' '}
           <strong>

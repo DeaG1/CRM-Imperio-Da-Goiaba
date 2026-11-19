@@ -1,4 +1,4 @@
-// Gerado a partir do design (Imperio da Goiaba CRM v2.dc.html) por scripts/convert-design.mjs.
+// Baseado no design (Imperio da Goiaba CRM v2.dc.html) e mantido à mão: histórico de interações real.
 'use client';
 
 import { Fragment } from 'react';
@@ -107,13 +107,23 @@ export function ClienteFicha({ ui }: { ui: Vals }) {
               </div>
             </div>
             <div style={{ background: "#fff", border: "1px solid #e7ece3", borderRadius: "13px", padding: "20px" }}>
-              <h3 style={{ fontFamily: "'Inter',sans-serif", fontSize: "14px", fontWeight: "700", color: "#0f2a18", margin: "0 0 14px" }}>
-                Histórico de interações
-              </h3>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", margin: "0 0 14px" }}>
+                <h3 style={{ flex: "1", fontFamily: "'Inter',sans-serif", fontSize: "14px", fontWeight: "700", color: "#0f2a18", margin: "0" }}>
+                  Histórico de interações
+                </h3>
+                <button onClick={ui.newInteracao} style={{ background: "#fff", color: "#1d7a3e", border: "1px solid #cfe3d3", borderRadius: "8px", padding: "6px 12px", fontSize: "12px", fontWeight: "600", cursor: "pointer", fontFamily: "'Inter',sans-serif" }} className="h4">
+                  ＋ Registrar
+                </button>
+              </div>
+              {ui.semInteracoes ? (
+                <div style={{ padding: "14px 0 4px", textAlign: "center", fontSize: "12.5px", color: "#6b7a6f" }}>
+                  Nenhuma interação registrada. Anote visitas, ligações e combinados com o cliente.
+                </div>
+              ) : null}
               <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
                 {(ui.sel.interacoes || []).map((i, k0) => (
                   <Fragment key={k0}>
-                    <div style={{ display: "flex", gap: "13px", paddingBottom: "16px", position: "relative" }}>
+                    <div onClick={i.edit} title="Clique para editar" style={{ display: "flex", gap: "13px", paddingBottom: "16px", position: "relative", cursor: "pointer" }}>
                       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: "0 0 auto" }}>
                         <span style={{ width: "10px", height: "10px", borderRadius: "50%", background: i.color, marginTop: "4px" }} />
                         <span style={{ flex: "1", width: "2px", background: "#eef2ea", marginTop: "3px" }} />
@@ -181,7 +191,7 @@ export function ClienteFicha({ ui }: { ui: Vals }) {
                 Observações do vendedor
               </h3>
               <div style={{ fontSize: "13px", color: "#6a5a32", lineHeight: "1.5", fontStyle: "italic" }}>
-                "{ui.sel.obs}"
+                &quot;{ui.sel.obs}&quot;
               </div>
             </div>
           </div>

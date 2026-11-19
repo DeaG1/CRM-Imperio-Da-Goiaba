@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Publicar na conta Cloudflare nova (subdomínio gestao-crm.workers.dev),
+  // nunca na conta "velasqui" (nome de concorrente do cliente; lá também está o crm-bigdog).
+  "name": "crm",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-11-19",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    { "binding": "WORKER_SELF_REFERENCE", "service": "crm" }
+  ],
+  // Domínio próprio (quando houver): o domínio precisa estar na MESMA conta Cloudflare
+  // deste Worker; no deploy a Cloudflare cria o DNS e o HTTPS sozinha. Exemplo:
+  //   "routes": [{ "pattern": "crm.seudominio.com.br", "custom_domain": true }],
+  // Sem domínio próprio, o endereço é https://crm.<subdomínio-da-conta>.workers.dev
+  // — nesta conta: https://<nome-do-worker>.gestao-crm.workers.dev
+  // Banco: Supabase (Postgres) via Hyperdrive. Crie com
+  //   npx wrangler hyperdrive create crm-imperio-db --connection-string="<Direct connection do Supabase>"
+  // e cole aqui o "id" que o comando devolver.
+  "hyperdrive": [
+    { "binding": "HYPERDRIVE", "id": "COLE_AQUI_O_ID_DO_HYPERDRIVE" }
+  ],
+  // O banco (Supabase) fica nos EUA: o Smart Placement roda o Worker perto dele, então as
+  // várias consultas de cada tela não atravessam o oceano — só a resposta final.
+  "placement": { "mode": "smart" },
+  "observability": { "enabled": true }
+}
