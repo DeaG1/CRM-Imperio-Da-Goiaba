@@ -29,7 +29,7 @@ para defini-las antes do primeiro uso com `SEED_ADMIN_PASSWORD` / `SEED_FUNC_PAS
 ### Produção: Cloudflare Workers + Supabase
 
 O app roda no **Cloudflare Workers** (adaptador OpenNext) numa conta Cloudflare própria (subdomínio **`gestao-crm.workers.dev`**)
-— endereço **`https://app.gestao-crm.workers.dev`** (Worker `app`); nunca na conta `velasqui`. O banco é Postgres no
+— endereço **`https://crm-imperio-da-goiaba.gestao-crm.workers.dev`** (Worker `crm-imperio-da-goiaba`; a conta tem um Worker por cliente, `crm-<cliente>`); nunca na conta `velasqui`. O banco é Postgres no
 **Supabase**, ligado pelo **Hyperdrive** (pool de conexões da Cloudflare).
 
 1. **Supabase** — crie o projeto com *Data API desligada* e *RLS automático ligado* (o app fala
