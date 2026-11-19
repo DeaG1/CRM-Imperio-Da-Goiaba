@@ -18,11 +18,11 @@
   //   "routes": [{ "pattern": "crm.seudominio.com.br", "custom_domain": true }],
   // Sem domínio próprio, o endereço é https://crm.<subdomínio-da-conta>.workers.dev
   // — nesta conta: https://crm-imperio-da-goiaba.gestao-crm.workers.dev (um Worker por cliente: crm-<cliente>)
-  // Banco: Supabase (Postgres) via Hyperdrive. Crie com
-  //   npx wrangler hyperdrive create crm-imperio-db --connection-string="<Direct connection do Supabase>"
-  // e cole aqui o "id" que o comando devolver.
+  // Banco: Supabase (Postgres) via Hyperdrive "crm-imperio-da-goiaba-db" (conta gestao-crm),
+  // criado com a Direct connection do Supabase. CACHE DO HYPERDRIVE DESLIGADO (o CRM precisa
+  // sempre do dado mais recente: sessões, saldos, vendas recém-salvas).
   "hyperdrive": [
-    { "binding": "HYPERDRIVE", "id": "COLE_AQUI_O_ID_DO_HYPERDRIVE" }
+    { "binding": "HYPERDRIVE", "id": "524330f00a8d4a6d9f49b76b76f18312" }
   ],
   // O banco (Supabase) fica nos EUA: o Smart Placement roda o Worker perto dele, então as
   // várias consultas de cada tela não atravessam o oceano — só a resposta final.
