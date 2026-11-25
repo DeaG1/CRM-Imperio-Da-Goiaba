@@ -9,6 +9,9 @@
  *   user:list
  *   backup [arquivo.json]   exporta todos os dados (padrão: backups/backup-<data>.json)
  *   restore <arquivo.json>  APAGA os dados atuais e restaura o backup
+ *   recalcular [entradas|pedidos] [--aplicar]
+ *                      refaz o valor total pelos itens, com centavos (corrige o arredondamento
+ *                      antigo para reais). Sem --aplicar só MOSTRA o que mudaria.
  *
  * Banco: DATABASE_URL do ambiente; senão, a de `.env.producao` (Supabase); senão, o PGlite
  * local (.data/pglite). Para forçar o local mesmo com `.env.producao`, use DATABASE_URL= vazio.
@@ -18,9 +21,11 @@ try { process.loadEnvFile('.env.producao'); } catch { /* opcional */ }
 import fs from 'node:fs';
 import path from 'node:path';
 import { eq } from 'drizzle-orm';
+import { registrar } from '../src/server/audit';
 import { exportar, importar } from '../src/server/backup';
 import { getConn } from '../src/server/db';
-import { users } from '../src/server/db/schema';
+import { entradas, pedidos, users } from '../src/server/db/schema';
+import { totalItens } from '../src/shared/dinheiro';
 import { ensureDefaultUsers, seedDemo } from '../src/server/db/seed';
 import { hashPassword } from '../src/server/password';
 
@@ -35,6 +40,39 @@ async function main() {
   const db = conn.db;
   try {
     switch (cmd) {
+      case 'recalcular': {
+        // corrige totais gravados antes da correção dos centavos (eram arredondados para reais)
+        const aplicar = args.includes('--aplicar');
+        const quais = args.filter((a) => !a.startsWith('--'));
+        const tabelas = quais.length ? quais : ['entradas'];
+        for (const nome of tabelas) {
+          const t = nome === 'entradas' ? entradas : nome === 'pedidos' ? pedidos : null;
+          if (!t) throw new Error(`tabela desconhecida: ${nome} (use entradas ou pedidos)`);
+          const rows = await db.select().from(t);
+          const mudar = rows
+            .filter((r) => (r.itens || []).length)
+            .map((r) => ({ r, novo: totalItens(r.itens) }))
+            .filter(({ r, novo }) => Math.abs(novo - Number(r.valor)) > 0.001);
+          const dif = mudar.reduce((s, m) => s + (m.novo - Number(m.r.valor)), 0);
+          console.log(`\n${nome}: ${rows.length} registro(s), ${mudar.length} com valor arredondado (diferença total R$ ${dif.toFixed(2)})`);
+          for (const { r, novo } of mudar) {
+            const sit = 'pago' in r ? r.pago : r.pag;
+            const quando = 'data' in r ? r.data : r.entrega;
+            console.log(`  ${r.id}  ${quando}  R$ ${Number(r.valor).toFixed(2)} → R$ ${novo.toFixed(2)}  (${sit})`);
+          }
+          if (aplicar && mudar.length) {
+            await db.transaction(async (tx) => {
+              for (const { r, novo } of mudar) await tx.update(t).set({ valor: novo }).where(eq(t.id, r.id));
+            });
+            for (const { r, novo } of mudar) {
+              await registrar(db, null, nome, r.id, 'alterou', { valor: Number(r.valor) }, { valor: novo });
+            }
+            console.log(`  ✓ ${mudar.length} valor(es) corrigido(s) e registrado(s) no histórico`);
+          }
+        }
+        if (!aplicar) console.log('\n(simulação — nada foi gravado. Para aplicar: npm run db -- recalcular ' + tabelas.join(' ') + ' --aplicar)');
+        break;
+      }
       case 'migrate':
         await conn.migrate();
         console.log(`migrações aplicadas (${conn.kind})`);
