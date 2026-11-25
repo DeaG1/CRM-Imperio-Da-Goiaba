@@ -664,7 +664,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const inadOf = nome => { const f = fatByClient[nome]||0; return f>0 ? (atrasoByClient[nome]||0)/f*100 : 0; };
     const clientes = cd.map(c => {
       const cFat = fatByClient[c.nome] || 0, cEnt = entByClient[c.nome] || 0;
-      const cTE = cEnt ? Math.round(cFat/cEnt) : 0;
+      const cTE = cEnt ? centavos(cFat/cEnt) : 0;
       const cIn = inadOf(c.nome);
       const st = this.statusMap(c.status), hm = this.healthMap(this.healthOf(c, cIn, cTE));
       return { nome:c.nome, resp:c.resp, rota:c.rota, freq:c.freq, statusLabel:st.l,
@@ -693,7 +693,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const cEntregues = entregues.filter(p => p.cliente === c.nome);
     const cFaturado = cEntregues.reduce((s,p)=>s+(p.valor||0),0);
     const cVolume = cEntregues.reduce((s,p)=>s+(p.pesoKg||0),0);
-    const cTicketEntrega = cEntregues.length ? Math.round(cFaturado/cEntregues.length) : 0;
+    const cTicketEntrega = cEntregues.length ? centavos(cFaturado/cEntregues.length) : 0;
     const cPart = receitaFat ? Math.round(cFaturado/receitaFat*100) : 0;
     const cAllPeds = pedidosRaw.filter(p=>p.cliente===c.nome);
     const cAtrasados = cAllPeds.filter(p=>p.pag==='Atrasado');
@@ -924,7 +924,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
     if (cartRest > 0) carteira.push({ nome:'Demais '+(cartArr.length-5)+' clientes', pct:Math.round(cartRest/cartDen*100)+'%', bar:'100%', color:'#c3cdbf' });
     const top5Txt = 'Top 5 = ' + Math.round(cartTop.reduce((s,x)=>s+x.fat,0)/cartDen*100) + '% do faturamento';
     const cenBase = Math.max(lucroLiquido, 1);
-    const cenPess = Math.round(cenBase*M.cenarioPessimista), cenOtim = Math.round(cenBase*M.cenarioOtimista);
+    const cenPess = centavos(cenBase*M.cenarioPessimista), cenOtim = centavos(cenBase*M.cenarioOtimista);
     const cenScale = Math.max(cenOtim, lucroLiquido, 1);
     const cenarios = [
       { nome:'Pessimista', valor:'R$ '+fmtBR(cenPess), bar:Math.round(cenPess/cenScale*100)+'%', color:'#d8c9a8', txtColor:'#66756a', weight:500 },
@@ -1180,7 +1180,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
     // ---- relatórios ----
     const relClientesRows = clientesRaw.map(cc => {
       const fat = fatByClient[cc.nome]||0, ent = entByClient[cc.nome]||0;
-      const te = ent? Math.round(fat/ent):0;
+      const te = ent? centavos(fat/ent):0;
       const ccIn = inadOf(cc.nome);
       const st = this.statusMap(cc.status), hm = this.healthMap(this.healthOf(cc, ccIn, te));
       return { nome:cc.nome, rota:cc.rota, status:st.l, pedidos:ent, fat,
