@@ -170,9 +170,9 @@ export function EntradaForm({ ui }: { ui: Vals }) {
                     </Fragment>
                   ))}
                 </select>
-                <input type="number" data-idx={it.idx} data-f="kg" value={it.kg ?? ''} onChange={ui.updateItem} style={{ width: "100%", padding: "7px 8px", border: "1px solid #d3dbcf", borderRadius: "7px", fontSize: "12.5px", fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums", color: "#16241b", background: "#fff", boxSizing: "border-box", textAlign: "right" }} />
+                <input type="number" step="any" data-idx={it.idx} data-f="kg" value={it.kg ?? ''} onChange={ui.updateItem} style={{ width: "100%", padding: "7px 8px", border: "1px solid #d3dbcf", borderRadius: "7px", fontSize: "12.5px", fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums", color: "#16241b", background: "#fff", boxSizing: "border-box", textAlign: "right" }} />
                 <input type="number" step="0.01" data-idx={it.idx} data-f="preco" value={it.preco ?? ''} onChange={ui.updateItem} style={{ width: "100%", padding: "7px 8px", border: "1px solid #d3dbcf", borderRadius: "7px", fontSize: "12.5px", fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums", color: "#16241b", background: "#fff", boxSizing: "border-box", textAlign: "right" }} />
-                <input type="number" data-idx={it.idx} data-f="perdaKg" value={it.perdaKg ?? ''} onChange={ui.updateItem} style={{ width: "100%", padding: "7px 8px", border: "1px solid #d3dbcf", borderRadius: "7px", fontSize: "12.5px", fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums", color: "#16241b", background: "#fff", boxSizing: "border-box", textAlign: "right" }} />
+                <input type="number" step="any" data-idx={it.idx} data-f="perdaKg" value={it.perdaKg ?? ''} onChange={ui.updateItem} style={{ width: "100%", padding: "7px 8px", border: "1px solid #d3dbcf", borderRadius: "7px", fontSize: "12.5px", fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums", color: "#16241b", background: "#fff", boxSizing: "border-box", textAlign: "right" }} />
                 <div style={{ textAlign: "right", fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums", fontSize: "12.5px", fontWeight: "600", color: it.perdaColor }}>
                   {it.perdaPct}
                 </div>

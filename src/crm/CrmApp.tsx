@@ -14,6 +14,7 @@ import { AppView } from './AppView';
 import { api, ApiError } from './api';
 import { Aviso, Carregando } from './Aviso';
 import { CONFIG_PADRAO } from '../shared/config-padrao';
+import { centavos, subtotalItem, totalItens } from '../shared/dinheiro';
 
 const VAZIO = { bancos: [], veiculos: [], clientes: [], pedidos: [], fornecedores: [], produtos: [], interacoes: [], lancamentos: [], funcionarios: [], perdas: [], entradas: [] };
 /** modal -> coleção/recurso da API */
@@ -438,7 +439,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
         const d = { ...draft };
         if (d.itens && d.itens.length) {
           d.pesoKg = d.itens.reduce((s,i)=>s+(+i.kg||0),0);
-          d.valor = Math.round(d.itens.reduce((s,i)=>s+(+i.kg||0)*(+i.preco||0),0));
+          d.valor = totalItens(d.itens); // soma dos subtotais, com centavos
           d.perdaKg = d.itens.reduce((s,i)=>s+(+i.perdaKg||0),0);
         } else {
           ['pesoKg','valor','perdaKg'].forEach(k => { d[k] = num(d[k]); });
@@ -557,7 +558,9 @@ export class CrmApp extends Component<Record<string, never>, any> {
   healthMap(h) {
     return ({ green:{c:this.GREEN,bg:this.GBG,l:'Saudável',f:'Verde · Saudável'}, amber:{c:this.AMBER,bg:this.ABG,l:'Atenção',f:'Amarelo · Atenção'}, red:{c:this.RED,bg:this.RBG,l:'Risco',f:'Vermelho · Risco'} })[h];
   }
-  money(n) { return 'R$ ' + n.toLocaleString('pt-BR'); }
+  money(n) { return 'R$ ' + this.dinheiro(n); }
+  /** Valor em reais sempre com 2 casas: 4350.5 → "4.350,50". */
+  dinheiro(n) { return centavos(n).toLocaleString('pt-BR', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
 
   pStatusColor(s){ return ({Entregue:this.GREEN,'Em rota':'#2f6fb0',Pendente:this.AMBER,Devolvido:this.RED,Cancelado:'#6b7a6f'})[s]; }
   pStatusBg(s){ return ({Entregue:this.GBG,'Em rota':'#e3eef8',Pendente:this.ABG,Devolvido:this.RBG,Cancelado:'#f0f3ed'})[s]; }
@@ -665,8 +668,8 @@ export class CrmApp extends Component<Record<string, never>, any> {
       const cIn = inadOf(c.nome);
       const st = this.statusMap(c.status), hm = this.healthMap(this.healthOf(c, cIn, cTE));
       return { nome:c.nome, resp:c.resp, rota:c.rota, freq:c.freq, statusLabel:st.l,
-        ticketMes: !isAdmin? '—' : (cFat? 'R$ '+cFat.toLocaleString('pt-BR'):'—'),
-        ticketEntrega: !isAdmin? '—' : (cTE? 'R$ '+cTE.toLocaleString('pt-BR'):'—'),
+        ticketMes: !isAdmin? '—' : (cFat? 'R$ '+this.dinheiro(cFat):'—'),
+        ticketEntrega: !isAdmin? '—' : (cTE? 'R$ '+this.dinheiro(cTE):'—'),
         entregaColor: !isAdmin? '#6b7a6f' : (cTE>=M.ticketEntregaMin?this.GREEN:(cTE>=M.ticketEntregaRisco? this.AMBER : this.RED)),
         part: !isAdmin? '—' : (receitaFat? Math.round(cFat/receitaFat*100):0)+'%',
         inad: !isAdmin? '—' : cIn.toFixed(1).replace('.',',')+'%',
@@ -709,8 +712,8 @@ export class CrmApp extends Component<Record<string, never>, any> {
       statusLabel:stc.l, healthColor:hmc.c, healthBg:hmc.bg, healthFull:hmc.f, obs:c.obs,
       metricas:[
         { label:'Qtd no período', value:cVolume.toLocaleString('pt-BR'), sub:cEntregues.length+' entrega(s)', color:'#16241b' },
-        { label:'Faturado / mês', value:'R$ '+Math.round(cFaturado/nMeses).toLocaleString('pt-BR'), sub:(nMeses>1?'média de '+nMeses+' meses · ':'')+'meta R$ '+M.ticketMesMin.toLocaleString('pt-BR')+'–'+M.ticketMesMax.toLocaleString('pt-BR'), color: cFaturado/nMeses>=M.ticketMesMin?this.GREEN:(cFaturado/nMeses>=M.ticketMesAlerta?this.AMBER:this.RED) },
-        { label:'Ticket/entrega', value:'R$ '+cTicketEntrega.toLocaleString('pt-BR'), sub:'meta ≥ R$ '+M.ticketEntregaMin.toLocaleString('pt-BR'), color: cTicketEntrega>=M.ticketEntregaMin?this.GREEN:(cTicketEntrega>=M.ticketEntregaRisco?this.AMBER:this.RED) },
+        { label:'Faturado / mês', value:'R$ '+this.dinheiro(cFaturado/nMeses), sub:(nMeses>1?'média de '+nMeses+' meses · ':'')+'meta R$ '+M.ticketMesMin.toLocaleString('pt-BR')+'–'+M.ticketMesMax.toLocaleString('pt-BR'), color: cFaturado/nMeses>=M.ticketMesMin?this.GREEN:(cFaturado/nMeses>=M.ticketMesAlerta?this.AMBER:this.RED) },
+        { label:'Ticket/entrega', value:'R$ '+this.dinheiro(cTicketEntrega), sub:'meta ≥ R$ '+M.ticketEntregaMin.toLocaleString('pt-BR'), color: cTicketEntrega>=M.ticketEntregaMin?this.GREEN:(cTicketEntrega>=M.ticketEntregaRisco?this.AMBER:this.RED) },
         { label:'% do faturamento', value:cPart+'%', sub:'risco de concentração', color:'#16241b' },
         { label:'Última compra', value:cUlt, sub:'do último pedido entregue', color:'#16241b' },
         { label:'Inadimplência', value:cInad.toFixed(1).replace('.',',')+'%', sub:'meta ≤ '+M.inadMax+'% · '+cAtrasados.length+' atraso(s)', color: cInad<=M.inadMax?this.GREEN:(cInad<=M.inadAlerta?this.AMBER:this.RED) }
@@ -721,14 +724,14 @@ export class CrmApp extends Component<Record<string, never>, any> {
         { k:'Cliente desde', v:cDesde }, { k:'Código', v:'#'+c.id }
       ],
       credito:[
-        { k:'Limite de crédito', v:'R$ '+c.limite.toLocaleString('pt-BR'), color:'#16241b' },
+        { k:'Limite de crédito', v:'R$ '+this.dinheiro(c.limite), color:'#16241b' },
         { k:'Prazo de pagamento', v:c.prazo+' dias', color:'#16241b' },
         { k:'Taxa de inadimplência', v:cInad.toFixed(1).replace('.',',')+'%', color: cInad<=M.inadMax?this.GREEN:(cInad<=M.inadAlerta?this.AMBER:this.RED) },
         { k:'Status de cobrança', v:cCobranca, color: cCobranca==='Em dia'?this.GREEN:this.RED },
         { k:'Histórico de atrasos', v: cAtrasados.length===0 ? '0 atrasos' : (cAtrasados.length+' pedido(s) · R$ '+cAtrasados.reduce((s,p)=>s+(p.valor||0),0).toLocaleString('pt-BR')), color: cAtrasados.length? this.RED : '#16241b' }
       ],
       pedidos: pedidosRaw.filter(p => p.cliente===c.nome).slice(0,4).map(p => ({
-        id:p.id, data:this._fmtDate(p.entrega), peso:(p.pesoKg||0).toLocaleString('pt-BR'), valor:'R$ '+(p.valor||0).toLocaleString('pt-BR'), status:p.status,
+        id:p.id, data:this._fmtDate(p.entrega), peso:(p.pesoKg||0).toLocaleString('pt-BR'), valor:'R$ '+this.dinheiro(p.valor||0), status:p.status,
         statusColor:this.pStatusColor(p.status), statusBg:this.pStatusBg(p.status)
       })),
       // histórico real, registrado pela equipe (mais recente primeiro)
@@ -769,24 +772,24 @@ export class CrmApp extends Component<Record<string, never>, any> {
           dispTxt: disp==null ? '' : (disp.toLocaleString('pt-BR')+' disp.'),
           dispColor: falta ? this.RED : '#6b7a6f',
           kgBorder: falta ? '#d6334a' : '#d3dbcf',
-          subtotal:'R$ '+Math.round((+it.kg||0)*(+it.preco||0)).toLocaleString('pt-BR'),
+          subtotal:'R$ '+this.dinheiro(subtotalItem(it)),
           remove:()=>this.removeItem(i) };
       });
       temAlertaEstoque = estoqueAlertas.length > 0;
       const pk = its.reduce((s,i)=>s+(+i.kg||0),0);
-      const pv = its.reduce((s,i)=>s+(+i.kg||0)*(+i.preco||0),0);
+      const pv = totalItens(its);
       const pp = its.reduce((s,i)=>s+(+i.perdaKg||0),0);
       const ppct = pk ? pp/pk*100 : 0;
-      pedTotals = { peso:pk.toLocaleString('pt-BR'), valor:'R$ '+Math.round(pv).toLocaleString('pt-BR'),
+      pedTotals = { peso:pk.toLocaleString('pt-BR'), valor:'R$ '+this.dinheiro(pv),
         perdaKg:pp.toLocaleString('pt-BR'), perdaPct:ppct.toFixed(1).replace('.',',')+'%',
         perdaColor: ppct<=M.perdaMax?this.GREEN:(ppct<=M.perdaAlerta?this.AMBER:this.RED) };
-      entTotals = { peso:pk.toLocaleString('pt-BR'), valor:'R$ '+Math.round(pv).toLocaleString('pt-BR'),
+      entTotals = { peso:pk.toLocaleString('pt-BR'), valor:'R$ '+this.dinheiro(pv),
         perdaKg:pp.toLocaleString('pt-BR'), perdaPct:ppct.toFixed(1).replace('.',',')+'%',
         perdaColor: ppct<=M.perdaMax?this.GREEN:(ppct<=M.perdaAlerta?this.AMBER:this.RED) };
     }
 
     // ---- financeiro (vivo, a partir dos pedidos + lançamentos) ----
-    const fmtBR = n => Math.round(n).toLocaleString('pt-BR');
+    const fmtBR = n => this.dinheiro(n); // dinheiro sempre com centavos
     const compraMercadoria = entradasPeriodo.reduce((s,en)=>s+(en.valor||0),0);
     const lancRaw = this.state.lancamentos;
     const lancPeriodo = periodo==='all' ? lancRaw : lancRaw.filter(l=>this.anoMes(l.data)===periodo);
@@ -906,8 +909,8 @@ export class CrmApp extends Component<Record<string, never>, any> {
       { label:'Índice de perdas (%)', real:fmtPct1(perdaMedia), meta:'≤ '+M.perdaMax+'%', pct:pctMeta(perdaMedia, M.perdaMax), color: perdaMedia<=M.perdaMax?this.GREEN:(perdaMedia<=M.perdaAlerta?this.AMBER:this.RED), tag: perdaMedia<=M.perdaMax?'na meta':'fora' },
       { label:'Markup médio (venda/compra)', real:Math.round(markupMedio)+'%', meta:'≥ '+M.markupMin+'%', pct:pctMeta(markupMedio, M.markupMin), color: markupMedio>=M.markupMin?this.GREEN:this.RED, tag: markupMedio>=M.markupMin?'na meta':'fora' },
       { label:'Nº de minimercados ativos', real:String(nAtivos), meta:'~'+M.minimercadosMeta, pct:pctMeta(nAtivos, M.minimercadosMeta), color: nAtivos>=M.minimercadosMeta?this.GREEN:(nAtivos>=M.minimercadosAlerta?this.AMBER:this.RED), tag:(nAtivos-M.minimercadosMeta>=0?'+':'')+(nAtivos-M.minimercadosMeta) },
-      { label:'Ticket médio / minimercado', real:'R$ '+Math.round(ticketMesReal).toLocaleString('pt-BR'), meta:(M.ticketMesMin/1000).toLocaleString('pt-BR')+'–'+(M.ticketMesMax/1000).toLocaleString('pt-BR')+'k', pct:pctMeta(ticketMesReal, M.ticketMesMax), color: ticketMesReal>=M.ticketMesMin?this.GREEN:(ticketMesReal>=M.ticketMesAlerta?this.AMBER:this.RED), tag: ticketMesReal>=M.ticketMesMin?'na meta':'quase' },
-      { label:'Ticket médio por entrega', real:'R$ '+Math.round(ticketEntregaReal).toLocaleString('pt-BR'), meta:'≥ R$ '+M.ticketEntregaMin.toLocaleString('pt-BR'), pct:pctMeta(ticketEntregaReal, M.ticketEntregaMin), color: ticketEntregaReal>=M.ticketEntregaMin?this.GREEN:(ticketEntregaReal>=M.ticketEntregaRisco?this.AMBER:this.RED), tag:(ticketEntregaReal>=M.ticketEntregaMin?'na meta':'-R$'+Math.round(M.ticketEntregaMin-ticketEntregaReal)) },
+      { label:'Ticket médio / minimercado', real:'R$ '+this.dinheiro(ticketMesReal), meta:(M.ticketMesMin/1000).toLocaleString('pt-BR')+'–'+(M.ticketMesMax/1000).toLocaleString('pt-BR')+'k', pct:pctMeta(ticketMesReal, M.ticketMesMax), color: ticketMesReal>=M.ticketMesMin?this.GREEN:(ticketMesReal>=M.ticketMesAlerta?this.AMBER:this.RED), tag: ticketMesReal>=M.ticketMesMin?'na meta':'quase' },
+      { label:'Ticket médio por entrega', real:'R$ '+this.dinheiro(ticketEntregaReal), meta:'≥ R$ '+M.ticketEntregaMin.toLocaleString('pt-BR'), pct:pctMeta(ticketEntregaReal, M.ticketEntregaMin), color: ticketEntregaReal>=M.ticketEntregaMin?this.GREEN:(ticketEntregaReal>=M.ticketEntregaRisco?this.AMBER:this.RED), tag:(ticketEntregaReal>=M.ticketEntregaMin?'na meta':'-R$'+Math.round(M.ticketEntregaMin-ticketEntregaReal)) },
       { label:'Inadimplência por cliente', real:fmtPct1(inadMedia), meta:'≤ '+M.inadMax+'%', pct:pctMeta(inadMedia, M.inadMax), color: inadMedia<=M.inadMax?this.GREEN:(inadMedia<=M.inadAlerta?this.AMBER:this.RED), tag: inadMedia<=M.inadMax?'na meta':'fora' },
       { label:'Giro de estoque (dias)', real:cicloEst.toString().replace('.',','), meta:'≤ '+M.giroMaxDias+' d', pct:pctMeta(cicloEst, M.giroMaxDias), color: cicloEst<=M.giroMaxDias?this.GREEN:this.AMBER, tag: cicloEst<=M.giroMaxDias?'na meta':'+'+(cicloEst-M.giroMaxDias)+'d' },
       { label:'Ciclo de caixa (dias)', real:String(cicloDias), meta:'≤ '+M.cicloMaxDias+' d', pct:pctMeta(cicloDias, M.cicloMaxDias), color: cicloColor, tag: cicloDias<=M.cicloMaxDias?'na meta':'+'+(cicloDias-M.cicloMaxDias)+'d' }
@@ -943,15 +946,15 @@ export class CrmApp extends Component<Record<string, never>, any> {
     // ---- pedidos ----
     const pedidoStats = [
       { label:'Pedidos no período', value:String(pedidosPeriodo.length), sub:periodLabel, color:'#66756a' },
-      { label:'Faturado (entregue)', value: isAdmin? 'R$ '+Math.round(receitaFat).toLocaleString('pt-BR') : '—', sub:entregues.length+' pedidos entregues', color:this.GREEN },
-      { label:'A receber / atrasado', value: isAdmin? 'R$ '+Math.round(aReceber).toLocaleString('pt-BR') : '—', sub:nAtraso+' pedido(s) em atraso', color: aReceber>0?this.RED:this.GREEN },
+      { label:'Faturado (entregue)', value: isAdmin? 'R$ '+this.dinheiro(receitaFat) : '—', sub:entregues.length+' pedidos entregues', color:this.GREEN },
+      { label:'A receber / atrasado', value: isAdmin? 'R$ '+this.dinheiro(aReceber) : '—', sub:nAtraso+' pedido(s) em atraso', color: aReceber>0?this.RED:this.GREEN },
       { label:'Qtd entregue', value:pedidosPeriodo.filter(p=>p.status==='Entregue').reduce((s,p)=>s+(p.pesoKg||0),0).toLocaleString('pt-BR'), sub:'no período', color:'#66756a' }
     ];
     const pedidos = pedidosPeriodo.map(p => {
       const pct = p.pesoKg ? p.perdaKg/p.pesoKg*100 : 0;
       return { id:p.id, cliente:p.cliente, rota:p.rota, entrega:this._fmtDate(p.entrega),
         itensTxt: (p.itens||[]).map(i=>(i.nome||'—')+' '+(+i.kg||0).toLocaleString('pt-BR')+' '+(i.un||'KG')).join(' · '),
-        peso:(p.pesoKg||0).toLocaleString('pt-BR'), valor: isAdmin? 'R$ '+(p.valor||0).toLocaleString('pt-BR') : '—',
+        peso:(p.pesoKg||0).toLocaleString('pt-BR'), valor: isAdmin? 'R$ '+this.dinheiro(p.valor||0) : '—',
         status:p.status, pag: isAdmin? p.pag : '—',
         receb: !isAdmin? '—' : ((p.status==='Entregue' && p.recebDias>0) ? p.recebDias+' d' : '—'),
         recebColor: !isAdmin? '#6b7a6f' : (p.pag==='Pago'?this.GREEN:(p.pag==='Atrasado'?this.RED:'#6b7a6f')),
@@ -1060,7 +1063,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
       const ppct = en.pesoKg ? (en.perdaKg||0)/en.pesoKg*100 : 0;
       return {
         id:en.id, fornecedor:en.fornecedor, data:this._fmtDate(en.data),
-        peso:(en.pesoKg||0).toLocaleString('pt-BR'), valor:'R$ '+(en.valor||0).toLocaleString('pt-BR'),
+        peso:(en.pesoKg||0).toLocaleString('pt-BR'), valor:'R$ '+this.dinheiro(en.valor||0),
         perda: en.pesoKg ? ppct.toFixed(1).replace('.',',')+'%' : '—',
         perdaColor: ppct<=M.perdaMax?this.GREEN:(ppct<=M.perdaAlerta?this.AMBER:this.RED),
         motivo: en.motivo && en.motivo!=='—' ? en.motivo : '',
@@ -1181,7 +1184,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
       const ccIn = inadOf(cc.nome);
       const st = this.statusMap(cc.status), hm = this.healthMap(this.healthOf(cc, ccIn, te));
       return { nome:cc.nome, rota:cc.rota, status:st.l, pedidos:ent, fat,
-        fatTxt:'R$ '+fat.toLocaleString('pt-BR'), teTxt: te? 'R$ '+te.toLocaleString('pt-BR') : '—',
+        fatTxt:'R$ '+this.dinheiro(fat), teTxt: te? 'R$ '+this.dinheiro(te) : '—',
         part:(receitaFat?Math.round(fat/receitaFat*100):0)+'%',
         inad:ccIn.toFixed(1).replace('.',',')+'%', inadColor: ccIn<=M.inadMax?this.GREEN:(ccIn<=M.inadAlerta?this.AMBER:this.RED),
         healthColor:hm.c, healthBg:hm.bg, healthLabel:hm.l };
@@ -1413,7 +1416,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
       const cli = clientesRaw.find(x => x.nome === dr.cliente);
       if (cli && (+cli.limite||0) > 0) {
         const emAberto = pedidosRaw.filter(x => x.cliente===cli.nome && x.id!==dr.id && (x.pag==='Pendente'||x.pag==='Atrasado')).reduce((t,x)=>t+(x.valor||0),0);
-        const este = Math.round((dr.itens||[]).reduce((t,i)=>t+(+i.kg||0)*(+i.preco||0),0));
+        const este = totalItens(dr.itens||[]);
         if (dr.pag !== 'Pago' && emAberto + este > cli.limite) {
           alertaCredito = 'Limite de crédito de '+brMoney(cli.limite)+' excedido: '+cli.nome+' já deve '+brMoney(emAberto)+' e este pedido soma '+brMoney(este)+'.';
         }

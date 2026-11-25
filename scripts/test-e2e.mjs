@@ -122,6 +122,16 @@ async function testes() {
   r = await adm('POST', '/api/entradas', { fornecedor: forn.nome, data: hoje, itens: [{ produtoId: 1, nome: 'Batata', un: 'KG', kg: 10, preco: 2, perdaKg: 1 }] });
   ok(r.status === 201 && r.data.venc === addDias(hoje, 10) && r.data.valor === 20, 'compra vence pelo prazo do fornecedor', r.data);
   const ent = r.data;
+  // centavos: 33,3 × 2,15 = 71,595 → 71,60 (não 71,59 nem 72); 10,5 × 2,35 = 24,675 → 24,68
+  r = await adm('POST', '/api/entradas', { fornecedor: forn.nome, data: hoje, itens: [
+    { produtoId: 1, nome: 'Batata', un: 'KG', kg: 33.3, preco: 2.15, perdaKg: 0 },
+    { produtoId: 2, nome: 'Cebola', un: 'KG', kg: 10.5, preco: 2.35, perdaKg: 0 }] });
+  ok(r.status === 201 && r.data.valor === 96.28, 'entrada guarda centavos exatos (71,60 + 24,68 = 96,28)', r.data && r.data.valor);
+  const entCent = r.data;
+  r = await adm('POST', '/api/pedidos', { cliente: cli.nome, dataPedido: hoje, entrega: hoje, itens: [{ produtoId: 1, nome: 'Batata', un: 'KG', kg: 12.5, preco: 3.19 }] });
+  ok(r.status === 201 && r.data.valor === 39.88, 'venda guarda centavos (12,5 × 3,19 = 39,875 → 39,88)', r.data && r.data.valor);
+  await adm('DELETE', '/api/pedidos/' + encodeURIComponent(r.data.id));
+  await adm('DELETE', '/api/entradas/' + entCent.id);
   r = await adm('PUT', '/api/entradas/' + ent.id, { ...ent, pago: 'Pago', dataPag: hoje, bancoId: '2' });
   ok(r.data.pago === 'Pago' && r.data.bancoId === '2', 'compra paga pela conta 2');
   r = await adm('POST', '/api/lancamentos', { data: hoje, categoria: 'Simples Nacional', valor: 300, pago: 'Pendente', bancoId: '1' });

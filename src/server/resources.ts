@@ -15,6 +15,7 @@ import { z } from 'zod';
 import type { Db } from './db';
 import * as s from './db/schema';
 import { hojeBR } from '../shared/datas';
+import { totalItens } from '../shared/dinheiro';
 import { HttpError, notFound } from './http';
 import type { Role, SessionUser } from './session';
 
@@ -80,7 +81,8 @@ const itens = z.array(item).max(200, 'Itens demais neste lançamento.').default(
 function totais(lista: s.Item[]) {
   return {
     pesoKg: lista.reduce((a, i) => a + (i.kg || 0), 0),
-    valor: Math.round(lista.reduce((a, i) => a + (i.kg || 0) * (i.preco || 0), 0)),
+    // centavos importam (ex.: goiaba a R$ 2,35/kg): soma dos subtotais arredondados ao centavo
+    valor: totalItens(lista),
     perdaKg: lista.reduce((a, i) => a + (i.perdaKg || 0), 0),
   };
 }

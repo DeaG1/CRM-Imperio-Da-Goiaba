@@ -95,7 +95,7 @@ export function PedidoForm({ ui }: { ui: Vals }) {
                   ))}
                 </select>
                 <div>
-                  <input type="number" data-idx={it.idx} data-f="kg" value={it.kg ?? ''} onChange={ui.updateItem} style={{ width: "100%", padding: "7px 8px", border: `1px solid ${it.kgBorder}`, borderRadius: "7px", fontSize: "12.5px", fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums", color: "#16241b", background: "#fff", boxSizing: "border-box", textAlign: "right" }} />
+                  <input type="number" step="any" data-idx={it.idx} data-f="kg" value={it.kg ?? ''} onChange={ui.updateItem} style={{ width: "100%", padding: "7px 8px", border: `1px solid ${it.kgBorder}`, borderRadius: "7px", fontSize: "12.5px", fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums", color: "#16241b", background: "#fff", boxSizing: "border-box", textAlign: "right" }} />
                   <div style={{ fontSize: "10px", textAlign: "right", marginTop: "2px", color: it.dispColor, fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums" }}>
                     {it.dispTxt}
                   </div>
