@@ -10,6 +10,18 @@ export function centavos(x: number): number {
   return Number(Math.round(Number(Number(n.toPrecision(12)) + 'e2')) + 'e-2');
 }
 
+/**
+ * Lê um valor digitado no padrão brasileiro: "20", "20,5", "1.234,50", "1234.50" → número.
+ * Com vírgula, os pontos são separador de milhar; sem vírgula, o ponto é decimal.
+ */
+export function lerValor(v: unknown): number {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  const t = String(v ?? '').trim().replace(/[R$\s]/g, '');
+  if (!t) return 0;
+  const n = t.includes(',') ? Number(t.replace(/\./g, '').replace(',', '.')) : Number(t);
+  return Number.isFinite(n) ? n : 0;
+}
+
 type ItemValor = { kg?: number | string; preco?: number | string };
 
 /** Subtotal de um item (quantidade × preço), arredondado ao centavo. */

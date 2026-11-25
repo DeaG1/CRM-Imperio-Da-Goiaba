@@ -43,6 +43,13 @@
       "when": 1795089928415,
       "tag": "0005_login_falhas",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795634262402,
+      "tag": "0006_desconto_entrada",
+      "breakpoints": true
     }
   ]
 }

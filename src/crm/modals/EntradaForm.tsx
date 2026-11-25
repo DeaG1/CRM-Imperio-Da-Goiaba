@@ -216,6 +216,42 @@ export function EntradaForm({ ui }: { ui: Vals }) {
             </div>
             <div />
           </div>
+          {/* desconto da compra (ex.: R$ 2,00 por caixa quando o caminhão da empresa busca) */}
+          <div style={{ padding: "12px 14px", borderTop: "1px solid #ecdcc6", background: "#fff", display: "grid", gap: "10px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+              <label style={{ flex: "1", minWidth: "200px", fontSize: "13px", fontWeight: "700", color: "#0f2a18" }}>
+                Desconto na compra (R$)
+                <span style={{ display: "block", fontSize: "11.5px", fontWeight: "500", color: "#6b7a6f" }}>
+                  Ex.: frete quando o nosso caminhão busca a fruta
+                </span>
+              </label>
+              <input data-field="desconto" value={ui.draft.desconto ?? ''} onChange={ui.updateDraft} inputMode="decimal" placeholder="0,00"
+                style={{ width: "150px", padding: "9px 11px", border: `1px solid ${ui.entTotals.descontoMaior ? "#d6334a" : "#d3dbcf"}`, borderRadius: "8px", fontSize: "13px", fontFamily: "'Inter',sans-serif", fontVariantNumeric: "tabular-nums", textAlign: "right", color: "#16241b", background: "#fff", boxSizing: "border-box" }} />
+            </div>
+            {ui.entTotals.caixas > 0 ? (
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", fontSize: "12.5px", color: "#435349", background: "#f7f4ec", border: "1px solid #ecdcc6", borderRadius: "8px", padding: "8px 10px" }}>
+                <span>Calcular: R$</span>
+                <input data-field="descontoPorCaixa" value={ui.draft.descontoPorCaixa ?? ''} onChange={ui.updateDraft} inputMode="decimal"
+                  style={{ width: "70px", padding: "5px 7px", border: "1px solid #d3dbcf", borderRadius: "6px", fontSize: "12.5px", fontFamily: "'Inter',sans-serif", textAlign: "right", background: "#fff", boxSizing: "border-box" }} />
+                <span>por caixa × <strong>{ui.entTotals.caixasTxt}</strong> caixa(s)</span>
+                <button onClick={ui.aplicarDescontoPorCaixa} className="h5"
+                  style={{ marginLeft: "auto", background: "#1d7a3e", color: "#fff", border: "none", borderRadius: "7px", padding: "6px 12px", fontSize: "12px", fontWeight: "700", cursor: "pointer", fontFamily: "'Inter',sans-serif" }}>
+                  Aplicar desconto
+                </button>
+              </div>
+            ) : null}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", rowGap: "4px", fontSize: "13px", fontVariantNumeric: "tabular-nums" }}>
+              <span style={{ color: "#66756a" }}>Subtotal dos itens</span>
+              <span style={{ textAlign: "right", color: "#16241b" }}>{ui.entTotals.subtotal}</span>
+              <span style={{ color: "#66756a" }}>Desconto</span>
+              <span style={{ textAlign: "right", color: ui.entTotals.temDesconto ? "#b3283d" : "#66756a" }}>− {ui.entTotals.desconto}</span>
+              <span style={{ fontWeight: "700", color: "#0f2a18", borderTop: "1px solid #ecdcc6", paddingTop: "6px" }}>Total a pagar ao produtor</span>
+              <span style={{ textAlign: "right", fontWeight: "700", fontSize: "15px", color: "#0f2a18", borderTop: "1px solid #ecdcc6", paddingTop: "6px" }}>{ui.entTotals.aPagar}</span>
+            </div>
+            {ui.entTotals.descontoMaior ? (
+              <div role="alert" style={{ fontSize: "12px", color: "#b3283d" }}>O desconto não pode ser maior que o subtotal dos itens.</div>
+            ) : null}
+          </div>
         </div>
         <div style={{ gridColumn: "1/-1", background: "#f7f4ec", border: "1px solid #ecdcc6", borderRadius: "9px", padding: "10px 13px", fontSize: "12px", color: "#8a5a2a" }}>
           A{' '}
@@ -224,9 +260,9 @@ export function EntradaForm({ ui }: { ui: Vals }) {
           </strong>
           {' '}é registrada aqui (a mercadoria estraga sobre o que foi comprado) e alimenta o Índice de perdas. O{' '}
           <strong>
-            valor
+            total a pagar
           </strong>
-          {' '}alimenta a{' '}
+          {' '}(itens − desconto) alimenta as Contas a pagar e a{' '}
           <strong>
             Compra de mercadoria
           </strong>

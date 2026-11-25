@@ -14,7 +14,7 @@ import { AppView } from './AppView';
 import { api, ApiError } from './api';
 import { Aviso, Carregando } from './Aviso';
 import { CONFIG_PADRAO } from '../shared/config-padrao';
-import { centavos, subtotalItem, totalItens } from '../shared/dinheiro';
+import { centavos, lerValor, subtotalItem, totalItens } from '../shared/dinheiro';
 
 const VAZIO = { bancos: [], veiculos: [], clientes: [], pedidos: [], fornecedores: [], produtos: [], interacoes: [], lancamentos: [], funcionarios: [], perdas: [], entradas: [] };
 /** modal -> coleção/recurso da API */
@@ -261,9 +261,15 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const id = 'C-' + ((nums.length?Math.max.apply(null,nums):1041) + 1);
     const f0 = this.state.fornecedores[0];
     const hoje = this._hojeIso();
-    this.setState({ modal:'entrada', isEditing:false, draft:{ id, fornecedor:f0?f0.nome:'', data:hoje, pesoKg:0, valor:0, perdaKg:0, motivo:'—', pago:'Pendente', dataPag:'', formaPag:'PIX', itens:[] } });
+    this.setState({ modal:'entrada', isEditing:false, draft:{ id, fornecedor:f0?f0.nome:'', data:hoje, pesoKg:0, valor:0, desconto:'', descontoPorCaixa:'2,00', perdaKg:0, motivo:'—', pago:'Pendente', dataPag:'', formaPag:'PIX', itens:[] } });
   };
-  editEntrada = (id) => { const e = this.state.entradas.find(x=>x.id===id); if (e) this.setState({ modal:'entrada', isEditing:true, draft:{ ...e, itens:(e.itens||[]).map(i=>({...i})) } }); };
+  /** Preenche o desconto: R$ por caixa × total de caixas da entrada (itens na unidade CX). */
+  aplicarDescontoPorCaixa = () => this.setState(s => {
+    const d = s.draft || {};
+    const caixas = (d.itens || []).filter(i => (i.un || 'KG') === 'CX').reduce((t, i) => t + (+i.kg || 0), 0);
+    return { draft: { ...d, desconto: this.dinheiro(centavos(lerValor(d.descontoPorCaixa) * caixas)) } };
+  });
+  editEntrada = (id) => { const e = this.state.entradas.find(x=>x.id===id); if (e) this.setState({ modal:'entrada', isEditing:true, draft:{ ...e, desconto: Number(e.desconto) ? this.dinheiro(e.desconto) : '', descontoPorCaixa:'2,00', itens:(e.itens||[]).map(i=>({...i})) } }); };
   /** "Marcar pago" da compra: abre a baixa (data, forma e conta). */
   marcarEntradaPaga = (id, ev) => this.openPagarEntrada(id, ev);
   openPagarEntrada = (id, ev) => {
@@ -289,7 +295,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
     this.setState({ modal:'pagamento', isEditing:false, draft:{ id, dataPag: p.dataPagIso || hoje, forma: p.formaPag || 'PIX', bancoId: String(p.bancoId||'') } });
   };
 
-  addItem = () => this.setState(s => ({ draft:{ ...s.draft, itens:[ ...(s.draft.itens||[]), { produtoId:'', nome:'', un:'KG', kg:0, preco:0, perdaKg:0 } ] } }));
+  addItem = () => this.setState(s => ({ draft:{ ...s.draft, itens:[ ...(s.draft.itens||[]), { produtoId:'', nome:'', un:'KG', kg:'', preco:'', perdaKg:'' } ] } }));
 
   TIPOS_INTERACAO = ['Visita comercial','Ligação','Ligação de cobrança','WhatsApp','E-mail','Reclamação','Outro'];
   INTERACAO_COR = { 'Visita comercial':'#2e8b4a', 'Ligação':'#2f6fb0', 'Ligação de cobrança':'#d6334a', 'WhatsApp':'#2f6fb0', 'E-mail':'#7a5d8f', 'Reclamação':'#c79320', 'Outro':'#6b7a6f' };
@@ -318,7 +324,9 @@ export class CrmApp extends Component<Record<string, never>, any> {
       } else if (f === 'un') {
         it.un = v;
       } else {
-        it[f] = parseFloat(String(v).replace(',','.')) || 0;
+        // guarda o texto como foi digitado ("25.", "0.5"…): converter a cada tecla reescrevia o
+        // campo enquanto a pessoa digitava ("25.50" virava "050"). As contas usam +valor.
+        it[f] = v;
       }
       return { draft:{ ...s.draft, itens } };
     });
@@ -443,6 +451,11 @@ export class CrmApp extends Component<Record<string, never>, any> {
           d.perdaKg = d.itens.reduce((s,i)=>s+(+i.perdaKg||0),0);
         } else {
           ['pesoKg','valor','perdaKg'].forEach(k => { d[k] = num(d[k]); });
+        }
+        if (M === 'entrada') {
+          d.desconto = centavos(lerValor(d.desconto));
+          delete d.descontoPorCaixa;
+          if (d.itens && d.itens.length) d.valor = centavos(d.valor - d.desconto); // total a pagar ao produtor
         }
         if (M === 'pedido') {
           d.recebDias = num(d.recebDias);
@@ -783,13 +796,20 @@ export class CrmApp extends Component<Record<string, never>, any> {
       pedTotals = { peso:pk.toLocaleString('pt-BR'), valor:'R$ '+this.dinheiro(pv),
         perdaKg:pp.toLocaleString('pt-BR'), perdaPct:ppct.toFixed(1).replace('.',',')+'%',
         perdaColor: ppct<=M.perdaMax?this.GREEN:(ppct<=M.perdaAlerta?this.AMBER:this.RED) };
+      const desc = this.state.modal === 'entrada' ? centavos(lerValor(this.state.draft.desconto)) : 0;
+      const caixas = its.filter(i => (i.un || 'KG') === 'CX').reduce((t, i) => t + (+i.kg || 0), 0);
       entTotals = { peso:pk.toLocaleString('pt-BR'), valor:'R$ '+this.dinheiro(pv),
+        subtotal:'R$ '+this.dinheiro(pv), desconto:'R$ '+this.dinheiro(desc), temDesconto: desc > 0,
+        aPagar:'R$ '+this.dinheiro(centavos(pv - desc)), descontoMaior: desc > pv,
+        caixas, caixasTxt: caixas.toLocaleString('pt-BR'),
         perdaKg:pp.toLocaleString('pt-BR'), perdaPct:ppct.toFixed(1).replace('.',',')+'%',
         perdaColor: ppct<=M.perdaMax?this.GREEN:(ppct<=M.perdaAlerta?this.AMBER:this.RED) };
     }
 
     // ---- financeiro (vivo, a partir dos pedidos + lançamentos) ----
     const fmtBR = n => this.dinheiro(n); // dinheiro sempre com centavos
+    // desconto da compra repartido entre os itens: custo real = preço × (1 − desconto/subtotal)
+    const fatorDesc = en => { const b = totalItens(en.itens || []); const dsc = +en.desconto || 0; return b > 0 && dsc > 0 ? Math.max(0, (b - dsc) / b) : 1; };
     const compraMercadoria = entradasPeriodo.reduce((s,en)=>s+(en.valor||0),0);
     const lancRaw = this.state.lancamentos;
     const lancPeriodo = periodo==='all' ? lancRaw : lancRaw.filter(l=>this.anoMes(l.data)===periodo);
@@ -873,7 +893,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const cashAll = movs.reduce((s,m)=>s+m.ent-m.sai,0);
     // preço médio por produto: compra das entradas, venda das saídas
     const compraByProd = {}, vendaByProd = {};
-    entradasRaw.forEach(en => (en.itens||[]).forEach(it => { const k=String(it.produtoId||it.nome); if(!compraByProd[k])compraByProd[k]={q:0,t:0}; compraByProd[k].q+=(+it.kg||0); compraByProd[k].t+=(+it.kg||0)*(+it.preco||0); }));
+    entradasRaw.forEach(en => (en.itens||[]).forEach(it => { const k=String(it.produtoId||it.nome); if(!compraByProd[k])compraByProd[k]={q:0,t:0}; compraByProd[k].q+=(+it.kg||0); compraByProd[k].t+=(+it.kg||0)*(+it.preco||0)*fatorDesc(en); }));
     pedidosRaw.filter(p=>p.status!=='Cancelado').forEach(p => (p.itens||[]).forEach(it => { const k=String(it.produtoId||it.nome); if(!vendaByProd[k])vendaByProd[k]={q:0,t:0}; vendaByProd[k].q+=(+it.kg||0); vendaByProd[k].t+=(+it.kg||0)*(+it.preco||0); }));
     const markups = this.state.produtos.map(p => {
       const cb = compraByProd[String(p.id)]||compraByProd[p.nome], vb = vendaByProd[String(p.id)]||vendaByProd[p.nome];
@@ -974,11 +994,11 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const avgCompraByForn = {};
     entradasRaw.forEach(en => {
       let kg=0, tot=0;
-      (en.itens||[]).forEach(it => { kg+=(+it.kg||0); tot+=(+it.kg||0)*(+it.preco||0); });
+      (en.itens||[]).forEach(it => { kg+=(+it.kg||0); tot+=(+it.kg||0)*(+it.preco||0)*fatorDesc(en); });
       if (kg>0) { if(!avgCompraByForn[en.fornecedor]) avgCompraByForn[en.fornecedor]={kg:0,tot:0}; avgCompraByForn[en.fornecedor].kg+=kg; avgCompraByForn[en.fornecedor].tot+=tot; }
     });
     // variação = preço médio da última compra vs. a compra anterior do mesmo fornecedor
-    const precoMedioEntrada = en => { let kg=0,tot=0; (en.itens||[]).forEach(it=>{kg+=(+it.kg||0); tot+=(+it.kg||0)*(+it.preco||0);}); return kg>0? tot/kg : null; };
+    const precoMedioEntrada = en => { let kg=0,tot=0; (en.itens||[]).forEach(it=>{kg+=(+it.kg||0); tot+=(+it.kg||0)*(+it.preco||0)*fatorDesc(en);}); return kg>0? tot/kg : null; };
     const variaOf = f => {
       const es = entradasRaw.filter(en=>en.fornecedor===f.nome).slice().sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')));
       if (es.length < 2) return null;
@@ -1070,7 +1090,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
         pagInfo: en.pago==='Pago' && (en.formaPag||en.dataPag) ? (en.formaPag||'')+' · '+(en.dataPag?this._fmtDate(en.dataPag):'') : '',
         pago:en.pago, pagoColor: en.pago==='Pago'?this.GREEN:this.AMBER, pagoBg: en.pago==='Pago'?this.GBG:this.ABG,
         canPagar: en.pago!=='Pago', isPaga: en.pago==='Pago',
-        itensTxt: (en.itens||[]).map(i=>(i.nome||'—')+' '+(+i.kg||0).toLocaleString('pt-BR')+' '+(i.un||'KG')).join(' · '),
+        itensTxt: (en.itens||[]).map(i=>(i.nome||'—')+' '+(+i.kg||0).toLocaleString('pt-BR')+' '+(i.un||'KG')).join(' · ') + (+en.desconto ? ' · desconto R$ '+this.dinheiro(en.desconto) : ''),
         itensLista: (en.itens||[]).map(i=>({ nome:i.nome||'—', qtd:(+i.kg||0).toLocaleString('pt-BR')+' '+(i.un||'KG') })),
         pagar:(ev)=>this.marcarEntradaPaga(en.id, ev), edit:()=>this.editEntrada(en.id)
       };
@@ -1236,7 +1256,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
     const _pk = it => String(it.produtoId||it.nome);
     const _pn = it => it.nome || prodNameById[String(it.produtoId)] || '—';
     const _ensure = (k,nome) => { if(!prodAgg[k]) prodAgg[k]={nome,compQ:0,compV:0,vendQ:0,vendV:0,perda:0}; return prodAgg[k]; };
-    entradasPeriodo.forEach(en => (en.itens||[]).forEach(it => { const o=_ensure(_pk(it),_pn(it)); o.compQ+=(+it.kg||0); o.compV+=(+it.kg||0)*(+it.preco||0); o.perda+=(+it.perdaKg||0); }));
+    entradasPeriodo.forEach(en => (en.itens||[]).forEach(it => { const o=_ensure(_pk(it),_pn(it)); o.compQ+=(+it.kg||0); o.compV+=(+it.kg||0)*(+it.preco||0)*fatorDesc(en); o.perda+=(+it.perdaKg||0); }));
     perdasDep.forEach(pe => { const o=_ensure(String(pe.produtoId||pe.nome), pe.nome||prodNameById[String(pe.produtoId)]||'—'); o.perda+=(+pe.qtd||0); });
     entregues.forEach(p => (p.itens||[]).forEach(it => { const o=_ensure(_pk(it),_pn(it)); o.vendQ+=(+it.kg||0); o.vendV+=(+it.kg||0)*(+it.preco||0); }));
     const relProdutos = Object.keys(prodAgg).map(k => {
@@ -1462,7 +1482,7 @@ export class CrmApp extends Component<Record<string, never>, any> {
       modalUsuario: this.state.modal==='usuario', modalSenha: this.state.modal==='senha', usuarioNovo: !!this.state.draft && this.state.draft.id == null,
       rotaOptions: this._rotas(), empresaNome: (this.state.config && this.state.config.empresa && this.state.config.empresa.nome) || CONFIG_PADRAO.empresa.nome,
       isContas:S==='contas', contasStats, contasReceber, contasPagar, noReceber: contasReceber.length===0, noPagar: contasPagar.length===0,
-      alertaCredito,
+      alertaCredito, aplicarDescontoPorCaixa:this.aplicarDescontoPorCaixa,
       modalBaixa: ['pagamento','pagarEntrada','pagarLanc'].includes(this.state.modal), baixaRecebimento: this.state.modal==='pagamento',
       isEstoque:S==='estoque', isFuncionarios:S==='funcionarios', isVeiculos:S==='veiculos', isBancos:S==='bancos',
       funcViewEquipe: fv==='equipe', funcViewDiarias: fv==='diarias',

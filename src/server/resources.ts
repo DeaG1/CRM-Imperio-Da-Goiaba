@@ -15,7 +15,7 @@ import { z } from 'zod';
 import type { Db } from './db';
 import * as s from './db/schema';
 import { hojeBR } from '../shared/datas';
-import { totalItens } from '../shared/dinheiro';
+import { centavos, totalItens } from '../shared/dinheiro';
 import { HttpError, notFound } from './http';
 import type { Role, SessionUser } from './session';
 
@@ -314,16 +314,24 @@ export const resources: Record<string, ResourceDef> = {
       const d = z.object({
         fornecedorId: fk, fornecedor: txt(200), data: dataObrig('a data da coleta'),
         venc: dataOpt('Vencimento'),
-        pesoKg: num('Peso'), valor: num('Valor'), perdaKg: num('Perda'),
+        pesoKg: num('Peso'), valor: num('Valor'), perdaKg: num('Perda'), desconto: num('Desconto'),
         motivo: txt(60), pago: z.enum(['Pago', 'Pendente'], { error: 'Situação de pagamento inválida.' }).default('Pendente'),
         dataPag: dataOpt('Data do pagamento'), formaPag: txt(40), bancoId: fk, itens,
       }).parse(b);
+      // desconto da compra (ex.: R$ 2,00 por caixa quando o caminhão da empresa busca):
+      // o valor gravado é o total A PAGAR ao produtor = soma dos itens − desconto
+      d.desconto = centavos(d.desconto);
+      if (d.itens.length) {
+        const bruto = totalItens(d.itens as s.Item[]);
+        if (d.desconto > bruto) throw erroCampo('desconto', 'O desconto não pode ser maior que o total dos itens.');
+      }
       // vínculo com o cadastro: pelo id ou, se vier só o nome, pelo nome
       const [f] = d.fornecedorId != null
         ? await db.select().from(s.fornecedores).where(eq(s.fornecedores.id, d.fornecedorId)).limit(1)
         : d.fornecedor ? await db.select().from(s.fornecedores).where(eq(s.fornecedores.nome, d.fornecedor)).limit(1) : [];
       if (!f) throw erroCampo('fornecedor', d.fornecedor ? 'Fornecedor não encontrado no cadastro.' : 'Informe o fornecedor.');
       const out = { ...(d.itens.length ? { ...d, ...totais(d.itens as s.Item[]) } : d), fornecedorId: f.id, fornecedor: f.nome };
+      if (d.itens.length) out.valor = centavos(out.valor - d.desconto);
       if (!out.venc) out.venc = addDias(out.data, f.prazo || 0); // vencimento padrão: coleta + prazo do fornecedor
       if (out.pago === 'Pago' && !out.dataPag) out.dataPag = hojeIso();
       if (out.pago !== 'Pago') { out.dataPag = null; out.bancoId = null; }

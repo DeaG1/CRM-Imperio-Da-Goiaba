@@ -25,7 +25,7 @@ import { registrar } from '../src/server/audit';
 import { exportar, importar } from '../src/server/backup';
 import { getConn } from '../src/server/db';
 import { entradas, pedidos, users } from '../src/server/db/schema';
-import { totalItens } from '../src/shared/dinheiro';
+import { centavos, totalItens } from '../src/shared/dinheiro';
 import { ensureDefaultUsers, seedDemo } from '../src/server/db/seed';
 import { hashPassword } from '../src/server/password';
 
@@ -51,7 +51,8 @@ async function main() {
           const rows = await db.select().from(t);
           const mudar = rows
             .filter((r) => (r.itens || []).length)
-            .map((r) => ({ r, novo: totalItens(r.itens) }))
+            // entradas: total a pagar = itens − desconto
+            .map((r) => ({ r, novo: centavos(totalItens(r.itens) - ('desconto' in r ? Number(r.desconto) || 0 : 0)) }))
             .filter(({ r, novo }) => Math.abs(novo - Number(r.valor)) > 0.001);
           const dif = mudar.reduce((s, m) => s + (m.novo - Number(m.r.valor)), 0);
           console.log(`\n${nome}: ${rows.length} registro(s), ${mudar.length} com valor arredondado (diferença total R$ ${dif.toFixed(2)})`);

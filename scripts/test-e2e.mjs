@@ -132,6 +132,15 @@ async function testes() {
   ok(r.status === 201 && r.data.valor === 39.88, 'venda guarda centavos (12,5 × 3,19 = 39,875 → 39,88)', r.data && r.data.valor);
   await adm('DELETE', '/api/pedidos/' + encodeURIComponent(r.data.id));
   await adm('DELETE', '/api/entradas/' + entCent.id);
+  // desconto na compra (R$ 2,00 por caixa): 40 CX a R$ 25,50 = 1.020,00 − 80,00 = 940,00 a pagar
+  r = await adm('POST', '/api/entradas', { fornecedor: forn.nome, data: hoje, desconto: 80, itens: [{ produtoId: 4, nome: 'Alface', un: 'CX', kg: 40, preco: 25.5, perdaKg: 0 }] });
+  ok(r.status === 201 && r.data.valor === 940 && r.data.desconto === 80, 'desconto: total a pagar = itens − desconto (1.020 − 80 = 940)', r.data && [r.data.valor, r.data.desconto]);
+  const entDesc = r.data;
+  r = await adm('PUT', '/api/entradas/' + entDesc.id, { ...entDesc, desconto: 80.5 });
+  ok(r.status === 200 && r.data.valor === 939.5, 'desconto com centavos ao editar (1.020 − 80,50 = 939,50)', r.data && r.data.valor);
+  r = await adm('PUT', '/api/entradas/' + entDesc.id, { ...entDesc, desconto: 2000 });
+  ok(r.status === 400 && /maior que o total/.test(r.data.erro), 'desconto maior que os itens é recusado', r.data);
+  await adm('DELETE', '/api/entradas/' + entDesc.id);
   r = await adm('PUT', '/api/entradas/' + ent.id, { ...ent, pago: 'Pago', dataPag: hoje, bancoId: '2' });
   ok(r.data.pago === 'Pago' && r.data.bancoId === '2', 'compra paga pela conta 2');
   r = await adm('POST', '/api/lancamentos', { data: hoje, categoria: 'Simples Nacional', valor: 300, pago: 'Pendente', bancoId: '1' });

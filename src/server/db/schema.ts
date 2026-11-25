@@ -149,7 +149,10 @@ export const entradas = pgTable('entradas', {
   data: dia('data').notNull(),
   venc: dia('venc'), // vencimento do pagamento ao produtor
   pesoKg: qty('peso_kg').notNull().default(0),
+  // valor = total A PAGAR ao produtor = soma dos itens − desconto
   valor: money('valor').notNull().default(0),
+  // desconto na compra (ex.: R$ 2,00 por caixa quando o caminhão da empresa busca a fruta)
+  desconto: money('desconto').notNull().default(0),
   perdaKg: qty('perda_kg').notNull().default(0),
   motivo: text('motivo').notNull().default('—'),
   pago: text('pago', { enum: ['Pago', 'Pendente'] }).notNull().default('Pendente'),
